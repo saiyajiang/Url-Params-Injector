@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         URL 参数注入器（可视化配置版）
 // @namespace    https://github.com/saiyajiang/Url-Params-Injector
-// @version      1.2.0
-// @description  本脚本由 AI 辅助编写。为指定域名自动追加 / 覆盖 / 删除 URL 查询参数，自带可视化配置面板与常用站点预设（Steam 中文/换区等），支持通配域名、路径匹配、动态变量、规则导入导出
+// @version      1.3.0
+// @description  本脚本由 AI 辅助编写。为指定域名自动追加 / 覆盖 / 删除 URL 查询参数，自带可视化配置面板与常用站点预设（Steam 商店/社区中文、换区等），支持多域名、路径匹配、动态变量、规则导入导出
 // @author       悲歌
 // @match        *://*/*
 // @grant        GM_registerMenuCommand
@@ -48,37 +48,66 @@
    * 0.1 常用站点预设库
    * mode: soft 只改地址栏 | reload 刷新 | early 抢在渲染前跳转
    * ========================================================== */
+  // Steam 的两组域名：商店/客服在 steampowered.com，社区/市场/创意工坊在 steamcommunity.com
+  const STEAM_STORE = '*.steampowered.com';
+  const STEAM_COMMUNITY = 'steamcommunity.com';
+  const STEAM_ALL = STEAM_STORE + ', ' + STEAM_COMMUNITY;
+
   const PRESETS = [
     {
-      group: 'Steam · 界面语言',
+      group: 'Steam 全站 · 界面语言（商店 + 社区）',
       items: [
-        { name: 'Steam 商店 + 社区 · 简体中文', host: '*.steampowered.com', params: [{ key: 'l', value: 'schinese' }], mode: 'early', overwrite: true, note: '强制网页端显示简体中文' },
-        { name: 'Steam 商店 + 社区 · 繁体中文', host: '*.steampowered.com', params: [{ key: 'l', value: 'tchinese' }], mode: 'early', overwrite: true },
-        { name: 'Steam 商店 + 社区 · 英文', host: '*.steampowered.com', params: [{ key: 'l', value: 'english' }], mode: 'early', overwrite: true },
-        { name: 'Steam 商店 + 社区 · 日文', host: '*.steampowered.com', params: [{ key: 'l', value: 'japanese' }], mode: 'early', overwrite: true },
-        { name: 'Steam 商店 + 社区 · 韩文', host: '*.steampowered.com', params: [{ key: 'l', value: 'koreana' }], mode: 'early', overwrite: true },
-        { name: 'Steam 商店 + 社区 · 俄文', host: '*.steampowered.com', params: [{ key: 'l', value: 'russian' }], mode: 'early', overwrite: true }
+        { name: 'Steam 全站 · 简体中文', host: STEAM_ALL, params: [{ key: 'l', value: 'schinese' }], mode: 'early', overwrite: true, note: '覆盖 store.steampowered.com 与 steamcommunity.com' },
+        { name: 'Steam 全站 · 繁体中文', host: STEAM_ALL, params: [{ key: 'l', value: 'tchinese' }], mode: 'early', overwrite: true },
+        { name: 'Steam 全站 · 英文', host: STEAM_ALL, params: [{ key: 'l', value: 'english' }], mode: 'early', overwrite: true },
+        { name: 'Steam 全站 · 日文', host: STEAM_ALL, params: [{ key: 'l', value: 'japanese' }], mode: 'early', overwrite: true },
+        { name: 'Steam 全站 · 韩文', host: STEAM_ALL, params: [{ key: 'l', value: 'koreana' }], mode: 'early', overwrite: true },
+        { name: 'Steam 全站 · 俄文', host: STEAM_ALL, params: [{ key: 'l', value: 'russian' }], mode: 'early', overwrite: true },
+        { name: 'Steam 全站 · 德文', host: STEAM_ALL, params: [{ key: 'l', value: 'german' }], mode: 'early', overwrite: true },
+        { name: 'Steam 全站 · 法文', host: STEAM_ALL, params: [{ key: 'l', value: 'french' }], mode: 'early', overwrite: true }
+      ]
+    },
+    {
+      group: 'Steam 商店 · 界面语言（仅 steampowered.com）',
+      items: [
+        { name: 'Steam 商店 · 简体中文', host: STEAM_STORE, params: [{ key: 'l', value: 'schinese' }], mode: 'early', overwrite: true },
+        { name: 'Steam 商店 · 繁体中文', host: STEAM_STORE, params: [{ key: 'l', value: 'tchinese' }], mode: 'early', overwrite: true },
+        { name: 'Steam 商店 · 英文', host: STEAM_STORE, params: [{ key: 'l', value: 'english' }], mode: 'early', overwrite: true },
+        { name: 'Steam 商店 · 日文', host: STEAM_STORE, params: [{ key: 'l', value: 'japanese' }], mode: 'early', overwrite: true },
+        { name: 'Steam 商店 · 韩文', host: STEAM_STORE, params: [{ key: 'l', value: 'koreana' }], mode: 'early', overwrite: true },
+        { name: 'Steam 商店 · 俄文', host: STEAM_STORE, params: [{ key: 'l', value: 'russian' }], mode: 'early', overwrite: true }
+      ]
+    },
+    {
+      group: 'Steam 社区 · 界面语言（仅 steamcommunity.com）',
+      items: [
+        { name: 'Steam 社区 · 简体中文', host: STEAM_COMMUNITY, params: [{ key: 'l', value: 'schinese' }], mode: 'early', overwrite: true, note: '社区、市场、创意工坊、讨论区' },
+        { name: 'Steam 社区 · 繁体中文', host: STEAM_COMMUNITY, params: [{ key: 'l', value: 'tchinese' }], mode: 'early', overwrite: true },
+        { name: 'Steam 社区 · 英文', host: STEAM_COMMUNITY, params: [{ key: 'l', value: 'english' }], mode: 'early', overwrite: true },
+        { name: 'Steam 社区 · 日文', host: STEAM_COMMUNITY, params: [{ key: 'l', value: 'japanese' }], mode: 'early', overwrite: true },
+        { name: 'Steam 社区 · 韩文', host: STEAM_COMMUNITY, params: [{ key: 'l', value: 'koreana' }], mode: 'early', overwrite: true },
+        { name: 'Steam 社区 · 俄文', host: STEAM_COMMUNITY, params: [{ key: 'l', value: 'russian' }], mode: 'early', overwrite: true }
       ]
     },
     {
       group: 'Steam · 商店区域 / 货币（仅未登录时生效）',
       items: [
-        { name: 'Steam · 国区 CNY', host: '*.steampowered.com', params: [{ key: 'cc', value: 'cn' }], mode: 'early', overwrite: true, note: 'cc 参数仅在未登录状态下生效' },
-        { name: 'Steam · 美区 USD', host: '*.steampowered.com', params: [{ key: 'cc', value: 'us' }], mode: 'early', overwrite: true, note: 'cc 参数仅在未登录状态下生效' },
-        { name: 'Steam · 港区 HKD', host: '*.steampowered.com', params: [{ key: 'cc', value: 'hk' }], mode: 'early', overwrite: true, note: 'cc 参数仅在未登录状态下生效' },
-        { name: 'Steam · 日区 JPY', host: '*.steampowered.com', params: [{ key: 'cc', value: 'jp' }], mode: 'early', overwrite: true, note: 'cc 参数仅在未登录状态下生效' },
-        { name: 'Steam · 俄区 RUB', host: '*.steampowered.com', params: [{ key: 'cc', value: 'ru' }], mode: 'early', overwrite: true, note: 'cc 参数仅在未登录状态下生效' },
-        { name: 'Steam · 英区 GBP', host: '*.steampowered.com', params: [{ key: 'cc', value: 'uk' }], mode: 'early', overwrite: true, note: 'cc 参数仅在未登录状态下生效' },
-        { name: 'Steam · 土区 TRY', host: '*.steampowered.com', params: [{ key: 'cc', value: 'tr' }], mode: 'early', overwrite: true, note: 'cc 参数仅在未登录状态下生效' },
-        { name: 'Steam · 阿区 ARS', host: '*.steampowered.com', params: [{ key: 'cc', value: 'ar' }], mode: 'early', overwrite: true, note: 'cc 参数仅在未登录状态下生效' }
+        { name: 'Steam · 国区 CNY', host: STEAM_ALL, params: [{ key: 'cc', value: 'cn' }], mode: 'early', overwrite: true, note: 'cc 参数仅在未登录状态下生效' },
+        { name: 'Steam · 美区 USD', host: STEAM_ALL, params: [{ key: 'cc', value: 'us' }], mode: 'early', overwrite: true, note: 'cc 参数仅在未登录状态下生效' },
+        { name: 'Steam · 港区 HKD', host: STEAM_ALL, params: [{ key: 'cc', value: 'hk' }], mode: 'early', overwrite: true, note: 'cc 参数仅在未登录状态下生效' },
+        { name: 'Steam · 日区 JPY', host: STEAM_ALL, params: [{ key: 'cc', value: 'jp' }], mode: 'early', overwrite: true, note: 'cc 参数仅在未登录状态下生效' },
+        { name: 'Steam · 俄区 RUB', host: STEAM_ALL, params: [{ key: 'cc', value: 'ru' }], mode: 'early', overwrite: true, note: 'cc 参数仅在未登录状态下生效' },
+        { name: 'Steam · 英区 GBP', host: STEAM_ALL, params: [{ key: 'cc', value: 'uk' }], mode: 'early', overwrite: true, note: 'cc 参数仅在未登录状态下生效' },
+        { name: 'Steam · 土区 TRY', host: STEAM_ALL, params: [{ key: 'cc', value: 'tr' }], mode: 'early', overwrite: true, note: 'cc 参数仅在未登录状态下生效' },
+        { name: 'Steam · 阿区 ARS', host: STEAM_ALL, params: [{ key: 'cc', value: 'ar' }], mode: 'early', overwrite: true, note: 'cc 参数仅在未登录状态下生效' }
       ]
     },
     {
       group: 'Steam · 语言 + 区域组合',
       items: [
-        { name: 'Steam · 简中 + 国区', host: '*.steampowered.com', params: [{ key: 'l', value: 'schinese' }, { key: 'cc', value: 'cn' }], mode: 'early', overwrite: true },
-        { name: 'Steam · 简中 + 美区（看美元价）', host: '*.steampowered.com', params: [{ key: 'l', value: 'schinese' }, { key: 'cc', value: 'us' }], mode: 'early', overwrite: true, note: 'cc 仅未登录生效' },
-        { name: 'Steam · 简中 + 港区', host: '*.steampowered.com', params: [{ key: 'l', value: 'schinese' }, { key: 'cc', value: 'hk' }], mode: 'early', overwrite: true, note: 'cc 仅未登录生效' }
+        { name: 'Steam 全站 · 简中 + 国区', host: STEAM_ALL, params: [{ key: 'l', value: 'schinese' }, { key: 'cc', value: 'cn' }], mode: 'early', overwrite: true },
+        { name: 'Steam 全站 · 简中 + 美区（看美元价）', host: STEAM_ALL, params: [{ key: 'l', value: 'schinese' }, { key: 'cc', value: 'us' }], mode: 'early', overwrite: true, note: 'cc 仅未登录生效' },
+        { name: 'Steam 全站 · 简中 + 港区', host: STEAM_ALL, params: [{ key: 'l', value: 'schinese' }, { key: 'cc', value: 'hk' }], mode: 'early', overwrite: true, note: 'cc 仅未登录生效' }
       ]
     },
     {
@@ -86,7 +115,7 @@
       items: [
         { name: 'SteamDB · 显示所有价格', host: 'steamdb.info', params: [{ key: 'all', value: '1' }], mode: 'soft', overwrite: false },
         { name: '去掉 utm 追踪参数', host: '*', params: [], mode: 'soft', overwrite: false, remove: ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'gclid', 'fbclid'] },
-        { name: '去掉 Steam 的 snr 追踪', host: '*.steampowered.com', params: [], mode: 'soft', overwrite: false, remove: ['snr'] }
+        { name: '去掉 Steam 的 snr 追踪', host: STEAM_ALL, params: [], mode: 'soft', overwrite: false, remove: ['snr'] }
       ]
     }
   ];
@@ -150,7 +179,7 @@
   }
 
   /* ============================================================
-   * 2. 域名匹配（支持 *.example.com 通配）
+   * 2. 域名匹配（支持 *.example.com 通配，支持逗号分隔多个域名）
    * ========================================================== */
   function matchHost(hostname, pattern) {
     if (!pattern) return false;
@@ -162,6 +191,16 @@
       return h === base || h.endsWith('.' + base);
     }
     return h === p;
+  }
+
+  /**
+   * 一条规则可填多个域名，用逗号分隔
+   * 例：*.steampowered.com, steamcommunity.com
+   */
+  function matchHosts(hostname, hostField) {
+    const list = String(hostField || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (!list.length) return false;
+    return list.some(p => matchHost(hostname, p));
   }
 
   /**
@@ -224,7 +263,7 @@
 
     for (const rule of rules) {
       if (!rule || rule.enabled === false) continue;
-      if (!matchHost(url.hostname, rule.host)) continue;
+      if (!matchHosts(url.hostname, rule.host)) continue;
       if (!matchPath(url.pathname, rule.path)) continue;
 
       for (const p of (rule.params || [])) {
@@ -391,7 +430,7 @@
       <div class="upi-rule ${r.enabled === false ? 'off' : ''}">
         <div class="upi-row">
           <span style="min-width:52px;color:#6a737d">域名</span>
-          <input type="text" style="flex:1;min-width:220px" placeholder="example.com 或 *.example.com" value="${esc(r.host)}" data-rule="${i}" data-field="host">
+          <input type="text" style="flex:1;min-width:260px" placeholder="域名，多个用逗号分隔：*.steampowered.com, steamcommunity.com" value="${esc(r.host)}" data-rule="${i}" data-field="host">
           <label class="chk"><input type="checkbox" data-rule="${i}" data-field="enabled" ${r.enabled === false ? '' : 'checked'}>启用</label>
           <button class="danger" data-act="del-rule" data-rule="${i}">删除规则</button>
         </div>
@@ -459,7 +498,9 @@
           <input type="file" id="upi-file" accept=".json,application/json">
         </div>
         <div class="upi-tip">提示：本脚本由 AI 辅助编写，使用前请自行验证效果。
-· 域名支持通配，如 *.example.com 会匹配 a.example.com 与 example.com
+· 域名支持通配，如 *.steampowered.com 会匹配 store.、help. 等子域
+· 一条规则可填多个域名，逗号分隔：*.steampowered.com, steamcommunity.com
+· 注意 Steam 商店与社区是不同域名：商品页在 steampowered.com，社区/市场/创意工坊在 steamcommunity.com
 · 路径留空表示全部路径；填 /app/ 则只对该前缀生效
 · 三种注入模式：soft 只改地址栏不刷新；reload 刷新一次；early 在页面渲染前抢先跳转
 · Steam 的语言/地区必须由服务端渲染，务必选 early 或 reload，选 soft 看不到效果
@@ -529,7 +570,11 @@
       const it = g && g.items[parseInt(isel.value, 10)];
       if (!it) return toast('请先选择预设');
 
-      const host = (act === 'add-preset-current') ? win.location.hostname : it.host;
+      // 当前站点若已属于该预设的域名组，则保留整组域名（如 Steam 商店+社区一起生效）
+      let host = it.host;
+      if (act === 'add-preset-current') {
+        host = matchHosts(win.location.hostname, it.host) ? it.host : win.location.hostname;
+      }
       draft.push({
         id: uid(),
         host: host,
