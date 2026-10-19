@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         URL 参数注入器（可视化配置版）
 // @namespace    https://github.com/saiyajiang/Url-Params-Injector
-// @version      1.3.0
-// @description  本脚本由 AI 辅助编写。为指定域名自动追加 / 覆盖 / 删除 URL 查询参数，自带可视化配置面板与常用站点预设（Steam 商店/社区中文、换区等），支持多域名、路径匹配、动态变量、规则导入导出
+// @version      1.4.0
+// @description  本脚本由 AI 辅助编写。为指定域名自动追加 / 覆盖 / 删除 URL 查询参数，自带可视化配置面板、常用站点预设（Steam 商店/社区中文、换区等），并可拦截站点保存语言偏好的请求
 // @author       悲歌
 // @match        *://*/*
 // @grant        GM_registerMenuCommand
@@ -291,6 +291,12 @@
 
     if (!changed) return;
 
+    // 防死循环：10 秒内重定向超过 6 次说明站点在反复剥离参数，暂停注入
+    if ((needEarly || needReload) && tooManyRedirects()) {
+      console.warn('[UPI] 检测到频繁重定向，本轮暂停注入以防死循环');
+      return;
+    }
+
     applying = true;
     try {
       // early：页面尚未渲染完成时，先中止原请求再跳，避免白等一整页
@@ -342,6 +348,247 @@
 
     win.addEventListener('popstate', scheduleApply);
     win.addEventListener('hashchange', scheduleApply);
+  }
+
+  /* ============================================================
+   * 5.5 语言偏好防护：拦截站点自发保存语言的请求
+   *     典型场景：给 Steam 加了 ?l=schinese 后，Steam 会主动 POST
+   *     /account/setlanguage 与 /account/savelanguagepreferences
+   *     把语言写回账户与 cookie。本模块拦下这些请求，做到
+   *     「本次以中文显示，但不改动账户语言设置」。
+   * ========================================================== */
+  const GUARD_KEY = 'upi_guard_v1';
+
+  const DEFAULT_GUARD = {
+    enabled: false,
+    mode: 'swallow',      // swallow 吞掉不回调 | respond 伪造成功响应
+    blockCookie: true,    // 同时阻止写入 steam_language cookie
+    log: true,            // 控制台输出拦截日志
+    patterns: [
+      '/account/setlanguage',
+      '/account/savelanguagepreferences',
+      '/actions/SetLanguage',
+      '/account/ajaxsetlanguage',
+      '/languagepreferences',
+      'savelanguagepreferences'
+    ]
+  };
+
+  let guard = loadGuard();
+  let blockedCount = 0;
+
+  function loadGuard() {
+    try {
+      const raw = GM_getValue(GUARD_KEY, null);
+      if (!raw) return clone(DEFAULT_GUARD);
+      const g = JSON.parse(raw);
+      if (!g || typeof g !== 'object') return clone(DEFAULT_GUARD);
+      return normalizeGuard(g);
+    } catch (e) {
+      console.warn('[UPI] 防护配置解析失败，回退默认', e);
+      return clone(DEFAULT_GUARD);
+    }
+  }
+
+  function normalizeGuard(g) {
+    return {
+      enabled: !!g.enabled,
+      mode: (g.mode === 'respond') ? 'respond' : 'swallow',
+      blockCookie: g.blockCookie !== false,
+      log: g.log !== false,
+      patterns: (Array.isArray(g.patterns) ? g.patterns : DEFAULT_GUARD.patterns)
+        .map(s => String(s || '').trim()).filter(Boolean)
+    };
+  }
+
+  function saveGuard(g) {
+    GM_setValue(GUARD_KEY, JSON.stringify(g));
+  }
+
+  /** URL 是否命中拦截名单 */
+  function isLangSaveUrl(url) {
+    const u = String(url || '').toLowerCase();
+    if (!u) return false;
+    return guard.patterns.some(p => u.indexOf(String(p).toLowerCase()) !== -1);
+  }
+
+  function shouldBlock(method, url) {
+    if (!guard.enabled) return false;
+    // 只拦写操作，GET 查询类请求放行
+    const m = String(method || 'GET').toUpperCase();
+    if (m !== 'POST' && m !== 'PUT' && m !== 'PATCH' && m !== 'DELETE') return false;
+    return isLangSaveUrl(url);
+  }
+
+  function onBlocked(kind, url) {
+    blockedCount++;
+    if (guard.log) {
+      console.info('[UPI] 已拦截语言保存请求 #' + blockedCount + ' [' + kind + '] ' + url);
+    }
+    const tip = doc.getElementById('upi-guard-stat');
+    if (tip) tip.innerHTML = '本次已拦截 <b>' + blockedCount + '</b> 次语言保存请求';
+    if (blockedCount === 1) toast('🛡️ 已拦截 1 次语言保存请求（账户设置未被修改）');
+  }
+
+  /** XHR：吞掉 = 不发送、不触发任何回调（可避免 Steam 的后续跳转） */
+  function patchXHR() {
+    const OrigXHR = win.XMLHttpRequest;
+    if (!OrigXHR || !OrigXHR.prototype || OrigXHR.prototype.__upiPatched) return;
+    const P = OrigXHR.prototype;
+    const origOpen = P.open;
+    const origSend = P.send;
+
+    P.open = function (m, u) {
+      try {
+        this.__upiMethod = String(m || 'GET').toUpperCase();
+        this.__upiUrl = String(u == null ? '' : u);
+      } catch (e) { /* 属性不可写时忽略 */ }
+      return origOpen.apply(this, arguments);
+    };
+
+    P.send = function () {
+      const m = this.__upiMethod || 'GET';
+      const u = this.__upiUrl || '';
+      if (shouldBlock(m, u)) {
+        onBlocked(m, u);
+        if (guard.mode === 'respond') {
+          fakeXhrDone(this);
+          return;
+        }
+        // swallow：直接丢弃，不发送、不回调
+        try { this.__upiBlocked = true; } catch (e) {}
+        return;
+      }
+      return origSend.apply(this, arguments);
+    };
+
+    P.__upiPatched = true;
+  }
+
+  /** 伪造一个「成功」的 XHR 响应，让页面逻辑继续走（可能触发 Steam 的跳转） */
+  function fakeXhrDone(xhr) {
+    try {
+      const body = '{"success":1}';
+      const def = (k, v) => {
+        try { Object.defineProperty(xhr, k, { value: v, configurable: true, writable: true }); }
+        catch (e) { try { xhr[k] = v; } catch (e2) {} }
+      };
+      def('readyState', 4);
+      def('status', 200);
+      def('statusText', 'OK');
+      def('responseText', body);
+      def('response', body);
+      def('responseURL', xhr.__upiUrl || '');
+
+      if (typeof xhr.onreadystatechange === 'function') xhr.onreadystatechange(new Event('readystatechange'));
+      try { xhr.dispatchEvent(new Event('readystatechange')); } catch (e) {}
+      try { xhr.dispatchEvent(new Event('load')); } catch (e) {}
+      if (typeof xhr.onload === 'function') xhr.onload(new Event('load'));
+      try { xhr.dispatchEvent(new Event('loadend')); } catch (e) {}
+    } catch (e) {
+      console.warn('[UPI] 伪造响应失败', e);
+    }
+  }
+
+  /** fetch：respond 模式返回假 200；swallow 模式返回永不 settle 的 Promise */
+  function patchFetch() {
+    if (!win.fetch || win.fetch.__upiPatched) return;
+    const origFetch = win.fetch;
+    const patched = function (input, init) {
+      let url = '', method = 'GET';
+      try {
+        if (typeof input === 'string') url = input;
+        else if (input && input.url) url = String(input.url);
+        method = ((init && init.method) || (input && input.method) || 'GET');
+      } catch (e) { /* 忽略解析失败 */ }
+
+      if (shouldBlock(method, url)) {
+        onBlocked(String(method).toUpperCase(), url);
+        if (guard.mode === 'respond') {
+          const R = win.Response || Response;
+          try {
+            return Promise.resolve(new R('{"success":1}', {
+              status: 200, statusText: 'OK', headers: { 'Content-Type': 'application/json' }
+            }));
+          } catch (e) {
+            return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ success: 1 }), text: () => Promise.resolve('{"success":1}') });
+          }
+        }
+        return new Promise(function () { /* 永不 settle，等同吞掉 */ });
+      }
+      return origFetch.apply(win, arguments);
+    };
+    patched.__upiPatched = true;
+    try { Object.defineProperty(patched, 'name', { value: 'fetch', configurable: true }); } catch (e) {}
+    win.fetch = patched;
+  }
+
+  /** sendBeacon：直接吞掉并返回 true */
+  function patchBeacon() {
+    const nav = win.navigator;
+    if (!nav || !nav.sendBeacon || nav.sendBeacon.__upiPatched) return;
+    const orig = nav.sendBeacon.bind(nav);
+    const patched = function (url, data) {
+      if (guard.enabled && isLangSaveUrl(url)) {
+        onBlocked('BEACON', String(url));
+        return true;
+      }
+      return orig(url, data);
+    };
+    patched.__upiPatched = true;
+    try { nav.sendBeacon = patched; } catch (e) { /* 部分浏览器不可写 */ }
+  }
+
+  /** cookie：阻止写入 steam_language */
+  function patchCookie() {
+    const proto = win.Document && win.Document.prototype;
+    if (!proto || proto.__upiCookiePatched) return;
+    const d = Object.getOwnPropertyDescriptor(proto, 'cookie');
+    if (!d || !d.set) return;
+    Object.defineProperty(proto, 'cookie', {
+      configurable: true,
+      enumerable: d.enumerable,
+      get: function () { return d.get.call(this); },
+      set: function (v) {
+        const s = String(v == null ? '' : v);
+        if (guard.enabled && guard.blockCookie && /steam_language/i.test(s)) {
+          onBlocked('COOKIE', s);
+          return;
+        }
+        return d.set.call(this, v);
+      }
+    });
+    proto.__upiCookiePatched = true;
+  }
+
+  function installGuards() {
+    try {
+      patchXHR();
+      patchFetch();
+      patchBeacon();
+      patchCookie();
+    } catch (e) {
+      console.warn('[UPI] 安装防护失败', e);
+    }
+  }
+
+  /* ============================================================
+   * 5.6 防跳转死循环：短时间内重定向过多则暂停注入
+   * ========================================================== */
+  function tooManyRedirects() {
+    try {
+      const key = 'upi_redirect_log';
+      const now = Date.now();
+      let arr = [];
+      try { arr = JSON.parse(win.sessionStorage.getItem(key) || '[]'); } catch (e) { arr = []; }
+      if (!Array.isArray(arr)) arr = [];
+      arr = arr.filter(t => now - t < 10000);
+      arr.push(now);
+      win.sessionStorage.setItem(key, JSON.stringify(arr));
+      return arr.length > 6;
+    } catch (e) {
+      return false;
+    }
   }
 
   /* ============================================================
@@ -453,6 +700,28 @@
       </div>`;
   }
 
+  function guardSectionHtml() {
+    return `
+      <div class="upi-head4">🛡️ 语言偏好防护（不改动站点/账户的语言设置）</div>
+      <div class="upi-row">
+        <label class="chk"><input type="checkbox" id="upi-guard-enabled" ${guard.enabled ? 'checked' : ''}>启用拦截</label>
+        <select id="upi-guard-mode" style="padding:5px 8px;border-radius:6px;border:1px solid #d0d7de;background:#fff;color:#1f2328">
+          <option value="swallow" ${guard.mode === 'swallow' ? 'selected' : ''}>吞掉请求（不回调，推荐）</option>
+          <option value="respond" ${guard.mode === 'respond' ? 'selected' : ''}>伪造成功响应（页面可能跳转）</option>
+        </select>
+        <label class="chk"><input type="checkbox" id="upi-guard-cookie" ${guard.blockCookie ? 'checked' : ''}>阻止写 steam_language cookie</label>
+        <label class="chk"><input type="checkbox" id="upi-guard-log" ${guard.log ? 'checked' : ''}>控制台日志</label>
+      </div>
+      <div style="margin-top:8px;color:#6a737d">拦截目标 URL 关键字（每行一个，不区分大小写）</div>
+      <textarea id="upi-guard-patterns" style="min-height:80px">${esc(guard.patterns.join('\n'))}</textarea>
+      <div class="upi-tip" id="upi-guard-stat">本次已拦截 <b>${blockedCount}</b> 次语言保存请求</div>
+      <div class="upi-tip">· 只拦 POST/PUT/PATCH/DELETE，GET 查询放行
+· 「吞掉」会让站点的回调不执行，因此 Steam 那个「保存后剥掉 l= 参数再跳转」的动作也不会发生，可避免反复跳转
+· 「伪造成功」更贴近真实流程，但 Steam 随后会把地址栏的 l= 去掉，本脚本下一跳会再补，可能来回跳转
+· 已内置 Steam 的三个端点：/account/setlanguage、/account/savelanguagepreferences、/actions/SetLanguage
+</div>`;
+  }
+
   function presetItemsHtml(gi) {
     const g = PRESETS[gi];
     if (!g) return '';
@@ -479,6 +748,7 @@
           <button data-act="add-preset-current">按当前站点套用</button>
         </div>
         <div class="upi-tip" id="upi-preset-note"></div>
+        ${guardSectionHtml()}
         <div class="upi-head4">📋 当前规则</div>
         <div id="upi-rules">${draft.map(ruleHtml).join('') || '<div style="color:#6a737d">暂无规则</div>'}</div>
         <div class="upi-foot">
@@ -664,6 +934,14 @@
 
   function onInput(e) {
     const el = e.target;
+
+    // 拦截名单：即时保存
+    if (el.id === 'upi-guard-patterns') {
+      guard.patterns = el.value.split('\n').map(s => s.trim()).filter(Boolean);
+      saveGuard(guard);
+      return;
+    }
+
     const field = el.getAttribute('data-field');
     if (!field || !draft) return;
     const ri = parseInt(el.getAttribute('data-rule'), 10);
@@ -693,6 +971,30 @@
     }
     if (el.id === 'upi-preset-item') {
       updatePresetNote();
+      return;
+    }
+
+    // 防护设置：即时保存，不受「保存」按钮影响
+    if (el.id === 'upi-guard-enabled') {
+      guard.enabled = el.checked;
+      saveGuard(guard);
+      if (guard.enabled) installGuards();
+      toast('语言偏好防护：' + (guard.enabled ? '已开启' : '已关闭'));
+      return;
+    }
+    if (el.id === 'upi-guard-mode') {
+      guard.mode = (el.value === 'respond') ? 'respond' : 'swallow';
+      saveGuard(guard);
+      return;
+    }
+    if (el.id === 'upi-guard-cookie') {
+      guard.blockCookie = el.checked;
+      saveGuard(guard);
+      return;
+    }
+    if (el.id === 'upi-guard-log') {
+      guard.log = el.checked;
+      saveGuard(guard);
       return;
     }
 
@@ -750,18 +1052,21 @@
 
   let toastTimer = null;
   function toast(msg) {
-    let el = doc.getElementById('upi-toast');
-    if (!el) {
-      el = doc.createElement('div');
-      el.id = 'upi-toast';
-      el.style.cssText = 'position:fixed;left:50%;bottom:40px;transform:translateX(-50%);z-index:2147483647;' +
-        'background:rgba(0,0,0,.82);color:#fff;padding:8px 16px;border-radius:8px;font-size:13px;';
-      doc.body.appendChild(el);
-    }
-    el.textContent = msg;
-    el.style.display = 'block';
-    if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { el.style.display = 'none'; }, 2200);
+    try {
+      if (!doc || !doc.body || typeof doc.body.appendChild !== 'function') return;
+      let el = doc.getElementById('upi-toast');
+      if (!el) {
+        el = doc.createElement('div');
+        el.id = 'upi-toast';
+        el.style.cssText = 'position:fixed;left:50%;bottom:40px;transform:translateX(-50%);z-index:2147483647;' +
+          'background:rgba(0,0,0,.82);color:#fff;padding:8px 16px;border-radius:8px;font-size:13px;';
+        doc.body.appendChild(el);
+      }
+      el.textContent = msg;
+      el.style.display = 'block';
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { el.style.display = 'none'; }, 2200);
+    } catch (e) { /* 页面环境异常时静默降级 */ }
   }
 
   /* ============================================================
@@ -770,8 +1075,15 @@
   function boot() {
     applyRules();
     installHooks();
+    installGuards();
 
     GM_registerMenuCommand('⚙️ 配置 URL 参数规则', openPanel);
+    GM_registerMenuCommand('🛡️ 开启 / 关闭语言偏好防护', function () {
+      guard.enabled = !guard.enabled;
+      saveGuard(guard);
+      if (guard.enabled) installGuards();
+      toast('语言偏好防护：' + (guard.enabled ? '已开启' : '已关闭') + '（下次进入站点生效）');
+    });
 
     const fileInput = doc.getElementById('upi-file');
     if (fileInput) fileInput.addEventListener('change', onFile);
@@ -792,4 +1104,7 @@
 
   // document-start 阶段先跑一次，SPA 场景靠 hooks 兜底
   applyRules();
+
+  // 防护必须在页面脚本发出请求前装好，所以不等 DOMContentLoaded
+  installGuards();
 })();
