@@ -20,6 +20,7 @@ Tampermonkey / Violentmonkey 脚本：给指定域名自动追加、覆盖或删
 - 劫持 `pushState` / `replaceState`，SPA（Vue / React 前端路由）切换路由也能补参
 - 可视化面板：新增 / 删除规则、增删参数、启停开关、一键为当前站点建规则
 - 规则导入导出：文本框粘贴、下载 JSON、上传 JSON 文件
+- **语言偏好防护（可选）**：拦截站点自发的「保存语言」请求，做到只改本次显示、不改账户设置
 
 ## 安装
 
@@ -47,6 +48,56 @@ Tampermonkey / Violentmonkey 脚本：给指定域名自动追加、覆盖或删
 1. 点击油猴图标 → **⚙️ 配置 URL 参数规则**
 2. 点「为当前站点新增」，或从预设库一键添加
 3. 点「保存并立即应用」，刷新或等待路由变化即可看到地址栏变化
+
+## 语言偏好防护（可选）
+
+### 为什么需要
+
+给 Steam 加上 `?l=schinese` 后，Steam 前端脚本会发现「URL 语言 ≠ 当前语言」，于是主动发起两个 POST 把语言写回账户：
+
+```
+store.steampowered.com  →  POST /account/setlanguage            { language, sessionid }
+store.steampowered.com  →  POST /account/savelanguagepreferences  { primary_language, secondary_languages[] }
+steamcommunity.com      →  POST /actions/SetLanguage              { language, sessionid }
+```
+
+结果就是**账户的语言偏好被改掉了**。开启防护后，这些请求会被拦下——页面照样以中文渲染，但账户设置保持不变。
+
+### 开启方式
+
+面板里勾选 **🛡️ 语言偏好防护 → 启用拦截**，或用油猴菜单 **🛡️ 开启 / 关闭语言偏好防护**。设置即时保存，下次进入站点生效。
+
+### 两种拦截方式
+
+| 方式 | 行为 | 说明 |
+| --- | --- | --- |
+| `吞掉请求`（推荐，默认） | 请求不发送，且**不触发任何回调** | 不会发生后续跳转，最安全 |
+| `伪造成功响应` | 返回假的 200，页面逻辑继续跑 | 更贴近真实流程，但 Steam 随后会剥掉地址栏的 `l=`，本脚本下一跳再补，可能来回跳转 |
+
+> 之所以默认「吞掉」：Steam 保存成功后的回调里有一句
+> `location.href = location.href.replace(/l\=[a-zA-Z]+&?/, "")`
+> 会把 `l=` 参数删掉。如果让它执行，脚本补参 → Steam 剥离 → 再补 → 再剥离，就成了死循环。吞掉请求可让回调永不触发。
+
+### 覆盖范围
+
+- XMLHttpRequest（`open` / `send` 原型级拦截）
+- `fetch`
+- `navigator.sendBeacon`
+- `document.cookie` 写入 `steam_language`（可单独开关）
+
+只拦 `POST / PUT / PATCH / DELETE`，GET 请求不受影响。拦截名单可在面板中自行增删，默认内置：
+
+```
+/account/setlanguage
+/account/savelanguagepreferences
+/actions/SetLanguage
+/account/ajaxsetlanguage
+/languagepreferences
+```
+
+### 额外的防死循环保险
+
+即便拦截失效导致站点反复剥离参数，脚本内置了保险：**10 秒内重定向超过 6 次就自动暂停注入**，并在控制台输出警告。可按正常刷新页面恢复。
 
 ### 三种注入模式
 
@@ -181,7 +232,8 @@ git push -u origin main
 
 - 脚本 `@match *://*/*`，在所有站点运行；只有命中规则的域名才会改 URL
 - **Steam 的 `cc=` 区域参数仅在未登录状态下生效**，登录后商店会按账户所在国家/地区显示价格，这是 Steam 官方规则，脚本无法绕过
-- Steam 的 `l=` 语言参数会同时写入 cookie，通常在访问一次后即生效
+- Steam 的 `l=` 语言参数会同时写入 cookie，通常在访问一次后即生效；不希望改动账户设置请开启「语言偏好防护」
+- 防护默认关闭，按需开启；拦截名单过宽可能误伤站点正常功能
 - 社区市场的价格同样受账户钱包币种约束，`cc=` 只在登出时有效
 - `steamcommunity.com` 是独立域名，不在 `*.steampowered.com` 通配范围内，需要显式写出来
 - `reload` / `early` 模式在某些站点（如银行、OA）可能触发风控或造成重复请求，按需开启
