@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         URL 参数注入器（可视化配置版）
 // @namespace    https://github.com/saiyajiang/Url-Params-Injector
-// @version      1.1.0
-// @description  本脚本由 AI 辅助编写。为指定域名自动追加 / 覆盖 / 删除 URL 查询参数，自带可视化配置面板，支持通配域名、动态变量、规则导入导出
+// @version      1.2.0
+// @description  本脚本由 AI 辅助编写。为指定域名自动追加 / 覆盖 / 删除 URL 查询参数，自带可视化配置面板与常用站点预设（Steam 中文/换区等），支持通配域名、路径匹配、动态变量、规则导入导出
 // @author       悲歌
 // @match        *://*/*
 // @grant        GM_registerMenuCommand
@@ -45,6 +45,59 @@
   ];
 
   /* ============================================================
+   * 0.1 常用站点预设库
+   * mode: soft 只改地址栏 | reload 刷新 | early 抢在渲染前跳转
+   * ========================================================== */
+  const PRESETS = [
+    {
+      group: 'Steam · 界面语言',
+      items: [
+        { name: 'Steam 商店 + 社区 · 简体中文', host: '*.steampowered.com', params: [{ key: 'l', value: 'schinese' }], mode: 'early', overwrite: true, note: '强制网页端显示简体中文' },
+        { name: 'Steam 商店 + 社区 · 繁体中文', host: '*.steampowered.com', params: [{ key: 'l', value: 'tchinese' }], mode: 'early', overwrite: true },
+        { name: 'Steam 商店 + 社区 · 英文', host: '*.steampowered.com', params: [{ key: 'l', value: 'english' }], mode: 'early', overwrite: true },
+        { name: 'Steam 商店 + 社区 · 日文', host: '*.steampowered.com', params: [{ key: 'l', value: 'japanese' }], mode: 'early', overwrite: true },
+        { name: 'Steam 商店 + 社区 · 韩文', host: '*.steampowered.com', params: [{ key: 'l', value: 'koreana' }], mode: 'early', overwrite: true },
+        { name: 'Steam 商店 + 社区 · 俄文', host: '*.steampowered.com', params: [{ key: 'l', value: 'russian' }], mode: 'early', overwrite: true }
+      ]
+    },
+    {
+      group: 'Steam · 商店区域 / 货币（仅未登录时生效）',
+      items: [
+        { name: 'Steam · 国区 CNY', host: '*.steampowered.com', params: [{ key: 'cc', value: 'cn' }], mode: 'early', overwrite: true, note: 'cc 参数仅在未登录状态下生效' },
+        { name: 'Steam · 美区 USD', host: '*.steampowered.com', params: [{ key: 'cc', value: 'us' }], mode: 'early', overwrite: true, note: 'cc 参数仅在未登录状态下生效' },
+        { name: 'Steam · 港区 HKD', host: '*.steampowered.com', params: [{ key: 'cc', value: 'hk' }], mode: 'early', overwrite: true, note: 'cc 参数仅在未登录状态下生效' },
+        { name: 'Steam · 日区 JPY', host: '*.steampowered.com', params: [{ key: 'cc', value: 'jp' }], mode: 'early', overwrite: true, note: 'cc 参数仅在未登录状态下生效' },
+        { name: 'Steam · 俄区 RUB', host: '*.steampowered.com', params: [{ key: 'cc', value: 'ru' }], mode: 'early', overwrite: true, note: 'cc 参数仅在未登录状态下生效' },
+        { name: 'Steam · 英区 GBP', host: '*.steampowered.com', params: [{ key: 'cc', value: 'uk' }], mode: 'early', overwrite: true, note: 'cc 参数仅在未登录状态下生效' },
+        { name: 'Steam · 土区 TRY', host: '*.steampowered.com', params: [{ key: 'cc', value: 'tr' }], mode: 'early', overwrite: true, note: 'cc 参数仅在未登录状态下生效' },
+        { name: 'Steam · 阿区 ARS', host: '*.steampowered.com', params: [{ key: 'cc', value: 'ar' }], mode: 'early', overwrite: true, note: 'cc 参数仅在未登录状态下生效' }
+      ]
+    },
+    {
+      group: 'Steam · 语言 + 区域组合',
+      items: [
+        { name: 'Steam · 简中 + 国区', host: '*.steampowered.com', params: [{ key: 'l', value: 'schinese' }, { key: 'cc', value: 'cn' }], mode: 'early', overwrite: true },
+        { name: 'Steam · 简中 + 美区（看美元价）', host: '*.steampowered.com', params: [{ key: 'l', value: 'schinese' }, { key: 'cc', value: 'us' }], mode: 'early', overwrite: true, note: 'cc 仅未登录生效' },
+        { name: 'Steam · 简中 + 港区', host: '*.steampowered.com', params: [{ key: 'l', value: 'schinese' }, { key: 'cc', value: 'hk' }], mode: 'early', overwrite: true, note: 'cc 仅未登录生效' }
+      ]
+    },
+    {
+      group: '其他常用',
+      items: [
+        { name: 'SteamDB · 显示所有价格', host: 'steamdb.info', params: [{ key: 'all', value: '1' }], mode: 'soft', overwrite: false },
+        { name: '去掉 utm 追踪参数', host: '*', params: [], mode: 'soft', overwrite: false, remove: ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'gclid', 'fbclid'] },
+        { name: '去掉 Steam 的 snr 追踪', host: '*.steampowered.com', params: [], mode: 'soft', overwrite: false, remove: ['snr'] }
+      ]
+    }
+  ];
+
+  const MODE_TEXT = {
+    soft: '仅改地址栏（不刷新）',
+    reload: '刷新页面（参数可被服务端读到）',
+    early: '抢在渲染前跳转（最快，适合 Steam）'
+  };
+
+  /* ============================================================
    * 1. 配置读写
    * ========================================================== */
   let rules = loadRules();
@@ -54,11 +107,34 @@
       const raw = GM_getValue(STORE_KEY, null);
       if (!raw) return clone(DEFAULT_RULES);
       const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
+      return Array.isArray(parsed) ? parsed.map(normalizeRule) : [];
     } catch (e) {
       console.warn('[UPI] 配置解析失败，回退到默认规则', e);
       return clone(DEFAULT_RULES);
     }
+  }
+
+  /**
+   * 规范化规则：补齐字段，并把 1.1.0 之前的 reload 布尔升级为 mode 三档
+   */
+  function normalizeRule(r) {
+    if (!r || typeof r !== 'object') return null;
+    let mode = r.mode;
+    if (mode !== 'soft' && mode !== 'reload' && mode !== 'early') {
+      mode = r.reload ? 'reload' : 'soft';
+    }
+    return {
+      id: r.id || uid(),
+      host: String(r.host || '').trim(),
+      path: String(r.path || '').trim(),
+      enabled: r.enabled !== false,
+      overwrite: !!r.overwrite,
+      mode: mode,
+      reload: mode === 'reload' || mode === 'early',
+      remove: (r.remove || []).map(s => String(s).trim()).filter(Boolean),
+      params: (r.params || []).filter(p => p && String(p.key || '').trim())
+        .map(p => ({ key: String(p.key).trim(), value: String(p.value == null ? '' : p.value) }))
+    };
   }
 
   function saveRules(list) {
@@ -86,6 +162,21 @@
       return h === base || h.endsWith('.' + base);
     }
     return h === p;
+  }
+
+  /**
+   * 路径匹配：留空表示匹配全部路径
+   * 支持前缀匹配 /app/ ，与 * 结尾的模糊匹配
+   */
+  function matchPath(pathname, pattern) {
+    const p = String(pattern || '').trim();
+    if (!p || p === '*') return true;
+    const h = pathname || '/';
+    if (p.indexOf('*') !== -1) {
+      const re = new RegExp('^' + p.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$');
+      return re.test(h);
+    }
+    return h === p || h.indexOf(p) === 0;
   }
 
   /* ============================================================
@@ -129,10 +220,12 @@
 
     let changed = false;
     let needReload = false;
+    let needEarly = false;
 
     for (const rule of rules) {
       if (!rule || rule.enabled === false) continue;
       if (!matchHost(url.hostname, rule.host)) continue;
+      if (!matchPath(url.pathname, rule.path)) continue;
 
       for (const p of (rule.params || [])) {
         if (!p || !p.key) continue;
@@ -153,14 +246,20 @@
         }
       }
 
-      if (rule.reload) needReload = true;
+      if (rule.mode === 'early') needEarly = true;
+      else if (rule.reload) needReload = true;
     }
 
     if (!changed) return;
 
     applying = true;
     try {
-      if (needReload) {
+      // early：页面尚未渲染完成时，先中止原请求再跳，避免白等一整页
+      const isEarlyStage = !doc || doc.readyState === 'loading' || !doc.body;
+      if (needEarly && isEarlyStage) {
+        try { win.stop(); } catch (e) { /* 部分浏览器不支持，忽略 */ }
+        win.location.replace(url.href);
+      } else if (needEarly || needReload) {
         win.location.replace(url.href);
       } else {
         win.history.replaceState(win.history.state, '', url.href);
@@ -297,8 +396,15 @@
           <button class="danger" data-act="del-rule" data-rule="${i}">删除规则</button>
         </div>
         <div class="upi-row" style="margin-top:8px">
-          <label class="chk"><input type="checkbox" data-rule="${i}" data-field="overwrite" ${r.overwrite ? 'checked' : ''}>覆盖已有同名参数</label>
-          <label class="chk"><input type="checkbox" data-rule="${i}" data-field="reload" ${r.reload ? 'checked' : ''}>写入后强制刷新页面</label>
+          <span style="min-width:52px;color:#6a737d">路径</span>
+          <input type="text" style="flex:1;min-width:180px" placeholder="留空=全部路径，如 /app/" value="${esc(r.path)}" data-rule="${i}" data-field="path">
+          <span style="min-width:52px;color:#6a737d">模式</span>
+          <select data-rule="${i}" data-field="mode">
+            <option value="soft" ${r.mode === 'soft' ? 'selected' : ''}>${MODE_TEXT.soft}</option>
+            <option value="reload" ${r.mode === 'reload' ? 'selected' : ''}>${MODE_TEXT.reload}</option>
+            <option value="early" ${r.mode === 'early' ? 'selected' : ''}>${MODE_TEXT.early}</option>
+          </select>
+          <label class="chk"><input type="checkbox" data-rule="${i}" data-field="overwrite" ${r.overwrite ? 'checked' : ''}>覆盖同名参数</label>
         </div>
         <div class="upi-head4">要添加的参数</div>
         ${params || '<div style="color:#6a737d">（暂无，点击下方按钮添加）</div>'}
@@ -308,12 +414,33 @@
       </div>`;
   }
 
+  function presetItemsHtml(gi) {
+    const g = PRESETS[gi];
+    if (!g) return '';
+    return g.items.map((it, ii) =>
+      `<option value="${ii}">${esc(it.name)} → ?${esc(it.params.map(p => p.key + '=' + p.value).join('&') || '(仅删除参数)')}</option>`
+    ).join('');
+  }
+
   function panelHtml(draft) {
     return `
       <div class="upi-box">
         <span class="upi-close" data-act="close">×</span>
         <h3>URL 参数注入器 · 规则配置</h3>
-        <div class="upi-sub">当前站点：<code>${esc(win.location.hostname)}</code></div>
+        <div class="upi-sub">当前站点：<code>${esc(win.location.hostname)}${esc(win.location.pathname)}</code></div>
+        <div class="upi-head4">📦 从预设一键添加</div>
+        <div class="upi-row">
+          <select id="upi-preset-group" style="padding:5px 8px;border-radius:6px;border:1px solid #d0d7de;background:#fff;color:#1f2328">
+            ${PRESETS.map((g, gi) => `<option value="${gi}">${esc(g.group)}</option>`).join('')}
+          </select>
+          <select id="upi-preset-item" style="flex:1;min-width:220px;padding:5px 8px;border-radius:6px;border:1px solid #d0d7de;background:#fff;color:#1f2328">
+            ${presetItemsHtml(0)}
+          </select>
+          <button data-act="add-preset">添加该预设</button>
+          <button data-act="add-preset-current">按当前站点套用</button>
+        </div>
+        <div class="upi-tip" id="upi-preset-note"></div>
+        <div class="upi-head4">📋 当前规则</div>
         <div id="upi-rules">${draft.map(ruleHtml).join('') || '<div style="color:#6a737d">暂无规则</div>'}</div>
         <div class="upi-foot">
           <button data-act="add-rule">+ 新增规则</button>
@@ -333,9 +460,12 @@
         </div>
         <div class="upi-tip">提示：本脚本由 AI 辅助编写，使用前请自行验证效果。
 · 域名支持通配，如 *.example.com 会匹配 a.example.com 与 example.com
+· 路径留空表示全部路径；填 /app/ 则只对该前缀生效
+· 三种注入模式：soft 只改地址栏不刷新；reload 刷新一次；early 在页面渲染前抢先跳转
+· Steam 的语言/地区必须由服务端渲染，务必选 early 或 reload，选 soft 看不到效果
+· Steam 的 cc= 区域参数仅在未登录状态下生效，登录后会被账户地区覆盖
 · 值支持动态变量：{ts} 毫秒时间戳、{ts_sec} 秒级、{date} 当天日期、{random} 随机串
 · 动态变量在同一次页面访问内固定，不会导致反复跳转
-· 「写入后强制刷新」用于参数需要被服务端读取的场景；否则只改地址栏，不刷新
 </div>
       </div>`;
   }
@@ -382,13 +512,38 @@
     if (act === 'close' || act === 'cancel') return closePanel();
 
     if (act === 'add-rule') {
-      draft.push({ id: uid(), host: '', enabled: true, overwrite: false, reload: false, remove: [], params: [{ key: '', value: '' }] });
+      draft.push({ id: uid(), host: '', path: '', enabled: true, overwrite: false, mode: 'soft', reload: false, remove: [], params: [{ key: '', value: '' }] });
       return renderPanel();
     }
 
     if (act === 'add-current') {
-      draft.push({ id: uid(), host: win.location.hostname, enabled: true, overwrite: false, reload: false, remove: [], params: [{ key: '', value: '' }] });
+      draft.push({ id: uid(), host: win.location.hostname, path: '', enabled: true, overwrite: false, mode: 'soft', reload: false, remove: [], params: [{ key: '', value: '' }] });
       return renderPanel();
+    }
+
+    if (act === 'add-preset' || act === 'add-preset-current') {
+      const gsel = doc.getElementById('upi-preset-group');
+      const isel = doc.getElementById('upi-preset-item');
+      if (!gsel || !isel) return;
+      const g = PRESETS[parseInt(gsel.value, 10)];
+      const it = g && g.items[parseInt(isel.value, 10)];
+      if (!it) return toast('请先选择预设');
+
+      const host = (act === 'add-preset-current') ? win.location.hostname : it.host;
+      draft.push({
+        id: uid(),
+        host: host,
+        path: '',
+        enabled: true,
+        overwrite: it.overwrite !== false,
+        mode: it.mode || 'soft',
+        reload: it.mode === 'reload' || it.mode === 'early',
+        remove: (it.remove || []).slice(),
+        params: (it.params || []).map(p => ({ key: p.key, value: p.value }))
+      });
+      renderPanel();
+      toast('已添加：' + it.name + '（记得点保存）');
+      return;
     }
 
     if (act === 'del-rule') {
@@ -409,16 +564,8 @@
 
     if (act === 'save') {
       draft = draft.filter(r => String(r.host || '').trim())
-        .map(r => ({
-          id: r.id || uid(),
-          host: String(r.host).trim(),
-          enabled: r.enabled !== false,
-          overwrite: !!r.overwrite,
-          reload: !!r.reload,
-          remove: (r.remove || []).map(s => String(s).trim()).filter(Boolean),
-          params: (r.params || []).filter(p => p && String(p.key || '').trim())
-            .map(p => ({ key: String(p.key).trim(), value: String(p.value == null ? '' : p.value) }))
-        }));
+        .map(normalizeRule)
+        .filter(Boolean);
       rules = clone(draft);
       saveRules(rules);
       dynCache.clear();
@@ -482,6 +629,8 @@
       if (draft[ri].params && draft[ri].params[pi]) draft[ri].params[pi][field] = el.value;
     } else if (field === 'remove') {
       draft[ri].remove = el.value.split(',').map(s => s.trim()).filter(Boolean);
+    } else if (field === 'path' || field === 'host') {
+      draft[ri][field] = el.value.trim();
     } else {
       draft[ri][field] = el.value;
     }
@@ -489,12 +638,51 @@
 
   function onChange(e) {
     const el = e.target;
-    if (el.type !== 'checkbox' || !draft) return;
+
+    // 预设分组切换：联动刷新条目列表与说明
+    if (el.id === 'upi-preset-group') {
+      const isel = doc.getElementById('upi-preset-item');
+      if (isel) isel.innerHTML = presetItemsHtml(parseInt(el.value, 10));
+      updatePresetNote();
+      return;
+    }
+    if (el.id === 'upi-preset-item') {
+      updatePresetNote();
+      return;
+    }
+
+    if (!draft) return;
+
+    // 注入模式下拉
+    if (el.tagName === 'SELECT') {
+      const field = el.getAttribute('data-field');
+      const ri = parseInt(el.getAttribute('data-rule'), 10);
+      if (!field || isNaN(ri) || !draft[ri]) return;
+      draft[ri][field] = el.value;
+      draft[ri].reload = (el.value === 'reload' || el.value === 'early');
+      return;
+    }
+
+    if (el.type !== 'checkbox') return;
     const field = el.getAttribute('data-field');
     const ri = parseInt(el.getAttribute('data-rule'), 10);
     if (!field || isNaN(ri) || !draft[ri]) return;
     draft[ri][field] = el.checked;
     if (field === 'enabled') renderPanel();
+  }
+
+  function updatePresetNote() {
+    const gsel = doc.getElementById('upi-preset-group');
+    const isel = doc.getElementById('upi-preset-item');
+    const note = doc.getElementById('upi-preset-note');
+    if (!gsel || !isel || !note) return;
+    const g = PRESETS[parseInt(gsel.value, 10)];
+    const it = g && g.items[parseInt(isel.value, 10)];
+    if (!it) { note.textContent = ''; return; }
+    const bits = [];
+    if (it.note) bits.push('⚠️ ' + it.note);
+    bits.push('模式：' + (MODE_TEXT[it.mode] || MODE_TEXT.soft));
+    note.textContent = bits.join(' · ');
   }
 
   function onFile(e) {
