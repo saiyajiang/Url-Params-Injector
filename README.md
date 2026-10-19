@@ -3,15 +3,18 @@
 > 说明：本项目由 AI 辅助编写，代码未经大规模生产环境验证，使用前请自行审阅与测试。
 
 Tampermonkey / Violentmonkey 脚本：给指定域名自动追加、覆盖或删除 URL 查询参数。
-带**可视化配置面板**，不用改代码即可管理规则，支持通配域名、动态变量、规则导入导出。
+带**可视化配置面板**和**常用站点预设库**，不用改代码即可管理规则，支持通配域名、路径匹配、三档注入模式、动态变量、规则导入导出。
+
+典型用途：让 Steam 网页端强制显示简体中文（`?l=schinese`）、查看其他区定价（`?cc=us`）、批量去掉 utm 追踪参数等。
 
 ## 功能
 
 - 按域名（hostname）匹配，支持 `*.example.com` 通配
 - 追加参数，可选「覆盖已有同名参数」或「已存在则跳过」
 - 支持删除指定参数（如批量去掉 `utm_*` 追踪参数）
-- 默认只改地址栏（`history.replaceState`，不刷新、不留历史记录）
-- 可选「写入后强制刷新」，用于参数需要被服务端读取的场景
+- **内置预设库**：Steam 界面语言、Steam 商店区域、语言+区域组合、去追踪参数，一键添加
+- **三种注入模式**：仅改地址栏 / 刷新页面 / 抢在渲染前跳转
+- **路径匹配**：可限定只对某些路径生效（如 Steam 的 `/app/`）
 - 动态变量：`{ts}` `{ts_sec}` `{date}` `{random}`，同一页面访问内固定，不会反复跳转
 - 劫持 `pushState` / `replaceState`，SPA（Vue / React 前端路由）切换路由也能补参
 - 可视化面板：新增 / 删除规则、增删参数、启停开关、一键为当前站点建规则
@@ -23,22 +26,51 @@ Tampermonkey / Violentmonkey 脚本：给指定域名自动追加、覆盖或删
 2. 打开本仓库 `Url-Params-Injector.user.js`，点「原始内容」→ 安装
 3. 或从 Greasy Fork 安装（发布后把链接补在这里）
 
+## 快速上手：让 Steam 显示简体中文
+
+1. 打开任意 Steam 商店页，点油猴图标 → **⚙️ 配置 URL 参数规则**
+2. 预设区第一个下拉选「Steam · 界面语言」，第二个选「Steam 商店 + 社区 · 简体中文」
+3. 点「按当前站点套用」→ **保存并立即应用**
+4. 之后访问 Steam 都会自动变成 `https://store.steampowered.com/.../?l=schinese`
+
+想看美区价格就选「Steam · 美区 USD」预设（注意 `cc` 需未登录）。
+
 ## 使用
 
 1. 点击油猴图标 → **⚙️ 配置 URL 参数规则**
-2. 点「为当前站点新增」，填域名和参数
+2. 点「为当前站点新增」，或从预设库一键添加
 3. 点「保存并立即应用」，刷新或等待路由变化即可看到地址栏变化
+
+### 三种注入模式
+
+| 模式 | 行为 | 适用场景 |
+| --- | --- | --- |
+| `soft` 仅改地址栏 | `history.replaceState`，不刷新、不留历史记录 | 埋点、分享链接美化 |
+| `reload` 刷新页面 | `location.replace` 重新请求一次 | 参数需要被服务端读取 |
+| `early` 抢在渲染前跳转 | 先 `window.stop()` 中止原请求再跳，避免白等一整页 | **Steam 语言/地区等必须由服务端渲染的参数** |
+
+> 关键点：Steam 的 `l=` / `cc=` 是服务端渲染参数，用 `soft` 模式改地址栏是**看不到效果**的，必须选 `early` 或 `reload`。
 
 ### 规则字段说明
 
 | 字段 | 说明 |
 | --- | --- |
 | 域名 | `example.com` 精确匹配；`*.example.com` 匹配自身及所有子域；`*` 匹配全部 |
+| 路径 | 留空匹配全部路径；填 `/app/` 则只对该前缀生效；支持 `*` 模糊匹配 |
 | 启用 | 关闭后该规则不生效 |
-| 覆盖已有同名参数 | 勾选则强制改写，不勾选则只在参数缺失时补上 |
-| 写入后强制刷新 | 勾选则用 `location.replace` 重新请求页面，参数可被后端读到 |
+| 模式 | 见上表三种注入模式 |
+| 覆盖同名参数 | 勾选则强制改写，不勾选则只在参数缺失时补上 |
 | 要添加的参数 | 键值对，值支持动态变量 |
 | 要删除的参数 | 逗号分隔的参数名，如 `utm_source,utm_medium` |
+
+### 内置预设一览
+
+| 分组 | 预设 |
+| --- | --- |
+| Steam 界面语言 | 简体中文 `schinese`、繁体中文 `tchinese`、英文 `english`、日文 `japanese`、韩文 `koreana`、俄文 `russian` |
+| Steam 商店区域 | 国区 `cn`、美区 `us`、港区 `hk`、日区 `jp`、俄区 `ru`、英区 `uk`、土区 `tr`、阿区 `ar` |
+| 组合 | 简中+国区、简中+美区、简中+港区 |
+| 其他 | SteamDB 显示所有价格、去 utm 追踪、去 Steam `snr` 追踪 |
 
 ### 动态变量
 
@@ -51,14 +83,36 @@ Tampermonkey / Violentmonkey 脚本：给指定域名自动追加、覆盖或删
 
 ### 示例配置
 
+### Steam 强制简体中文
+
+```json
+[
+  {
+    "id": "steam-zh",
+    "host": "*.steampowered.com",
+    "path": "",
+    "enabled": true,
+    "overwrite": true,
+    "mode": "early",
+    "remove": [],
+    "params": [
+      { "key": "l", "value": "schinese" }
+    ]
+  }
+]
+```
+
+### 通用示例
+
 ```json
 [
   {
     "id": "demo",
     "host": "*.example.com",
+    "path": "",
     "enabled": true,
     "overwrite": false,
-    "reload": false,
+    "mode": "soft",
     "remove": ["utm_source", "utm_medium"],
     "params": [
       { "key": "from", "value": "greasyfork" },
@@ -68,6 +122,8 @@ Tampermonkey / Violentmonkey 脚本：给指定域名自动追加、覆盖或删
   }
 ]
 ```
+
+> 老版本配置里的 `"reload": true` 仍能正常读取，会自动转换为 `mode: "reload"`。
 
 ## 发布到 Greasy Fork 并关联 GitHub
 
@@ -96,7 +152,9 @@ git push -u origin main
 ## 注意
 
 - 脚本 `@match *://*/*`，在所有站点运行；只有命中规则的域名才会改 URL
-- 「写入后强制刷新」在某些站点（如银行、OA）可能触发风控，按需开启
+- **Steam 的 `cc=` 区域参数仅在未登录状态下生效**，登录后商店会按账户所在国家/地区显示价格，这是 Steam 官方规则，脚本无法绕过
+- Steam 的 `l=` 语言参数会同时写入 cookie，通常在访问一次后即生效
+- `reload` / `early` 模式在某些站点（如银行、OA）可能触发风控或造成重复请求，按需开启
 - 配置存放在油猴的 `GM_setValue` 存储里，不同浏览器不互通，可用导出 JSON 迁移
 
 ## License
