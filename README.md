@@ -31,11 +31,37 @@ Tampermonkey / Violentmonkey 脚本：给指定域名自动追加、覆盖或删
 ## 快速上手：让 Steam 显示简体中文
 
 1. 打开任意 Steam 页面，点油猴图标 → **⚙️ 配置 URL 参数规则**
-2. 预设区第一个下拉选「Steam 全站 · 界面语言（商店 + 社区）」，第二个选「Steam 全站 · 简体中文」
-3. 点「添加该预设」→ **保存并立即应用**
-4. 之后商店和社区都会自动带上 `?l=schinese`
+2. 默认进入 **🎮 Steam 专区**
+3. 在「界面语言」点 **简体中文** → 生效范围选 **全站（商店 + 社区）** → 点 **应用语言设置**
+4. 顺手打开「🛡️ 语言偏好防护」，避免账户语言被一并改掉
+5. 完成。之后商店和社区都会自动带上 `?l=schinese`
 
-想看美区价格就选「Steam · 美区 USD」预设（注意 `cc` 需未登录）。
+想看美区价格再点「商店区域」里的 **美区**（注意 `cc` 需未登录）。
+
+## Steam 专区
+
+面板第一个页签就是 Steam 专属板块，把 Steam 相关的配置集中在一起，不用碰参数名和域名。
+
+| 区块 | 内容 |
+| --- | --- |
+| 状态卡片 | 一眼看到当前语言、生效范围、区域、防护是否开启 |
+| ① 界面语言 | 12 种语言点选 + 生效范围（全站 / 仅商店 / 仅社区） |
+| ② 商店区域 | 12 个区域点选（美区、国区、港区、日区、俄区…），带未登录提示 |
+| ③ 配套设置 | 语言偏好防护、阻止 cookie、去 snr 追踪、一键验证、清除全部 |
+
+专区的设置会落到三条固定 id 的规则里（`steam-lang` / `steam-cc` / `steam-clean`），可在「通用规则」页签查看和微调。重复设置会覆盖而不是新增，不会产生重复规则。
+
+### 生效范围怎么选
+
+Steam 有两组独立域名：
+
+| 范围 | 域名 | 覆盖 |
+| --- | --- | --- |
+| 全站（推荐） | `*.steampowered.com` + `steamcommunity.com` | 商店、客服、社区、市场、创意工坊 |
+| 仅商店 | `*.steampowered.com` | 商品页、购物车、客服 |
+| 仅社区 | `steamcommunity.com` | 社区、市场、讨论区、个人主页 |
+
+选「全站」才能两边都生效。
 
 > **Steam 有两组独立域名**，别搞混：
 > - `*.steampowered.com` — 商店、客服、结算（store. / help. / checkout. 等子域）
@@ -45,9 +71,15 @@ Tampermonkey / Violentmonkey 脚本：给指定域名自动追加、覆盖或删
 
 ## 使用
 
-1. 点击油猴图标 → **⚙️ 配置 URL 参数规则**
-2. 点「为当前站点新增」，或从预设库一键添加
-3. 点「保存并立即应用」，刷新或等待路由变化即可看到地址栏变化
+面板分三个页签：
+
+| 页签 | 用途 |
+| --- | --- |
+| 🎮 **Steam 专区** | Steam 语言 / 区域 / 防护的一站式配置，点选即可 |
+| 📋 **通用规则** | 任意站点的规则管理、预设库、导入导出 |
+| 🛡️ **高级防护** | 语言保存请求的拦截名单与模式微调 |
+
+通用规则用法：点「为当前站点新增」或从预设库一键添加 → **保存并立即应用**。
 
 ## 语言偏好防护（可选）
 
@@ -143,12 +175,12 @@ steamcommunity.com      →  POST /actions/SetLanguage              { language, 
 
 ### 示例配置
 
-### Steam 商店 + 社区强制简体中文（推荐）
+### Steam 专区生成的规则长这样
 
 ```json
 [
   {
-    "id": "steam-zh",
+    "id": "steam-lang",
     "host": "*.steampowered.com, steamcommunity.com",
     "path": "",
     "enabled": true,
@@ -158,9 +190,33 @@ steamcommunity.com      →  POST /actions/SetLanguage              { language, 
     "params": [
       { "key": "l", "value": "schinese" }
     ]
+  },
+  {
+    "id": "steam-cc",
+    "host": "*.steampowered.com, steamcommunity.com",
+    "path": "",
+    "enabled": true,
+    "overwrite": true,
+    "mode": "early",
+    "remove": [],
+    "params": [
+      { "key": "cc", "value": "us" }
+    ]
+  },
+  {
+    "id": "steam-clean",
+    "host": "*.steampowered.com, steamcommunity.com",
+    "path": "",
+    "enabled": true,
+    "overwrite": true,
+    "mode": "early",
+    "remove": ["snr"],
+    "params": []
   }
 ]
 ```
+
+固定 id 让专区能反复读取和覆盖同一条规则，不会产生重复条目。手动填也完全可以。
 
 ### 只改商店（不碰社区）
 
