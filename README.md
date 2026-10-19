@@ -12,7 +12,8 @@ Tampermonkey / Violentmonkey 脚本：给指定域名自动追加、覆盖或删
 - 按域名（hostname）匹配，支持 `*.example.com` 通配
 - 追加参数，可选「覆盖已有同名参数」或「已存在则跳过」
 - 支持删除指定参数（如批量去掉 `utm_*` 追踪参数）
-- **内置预设库**：Steam 界面语言、Steam 商店区域、语言+区域组合、去追踪参数，一键添加
+- **内置预设库**：Steam 全站/商店/社区语言、Steam 商店区域、语言+区域组合、去追踪参数，一键添加
+- **多域名支持**：一条规则可填多个域名（逗号分隔），如 `*.steampowered.com, steamcommunity.com`
 - **三种注入模式**：仅改地址栏 / 刷新页面 / 抢在渲染前跳转
 - **路径匹配**：可限定只对某些路径生效（如 Steam 的 `/app/`）
 - 动态变量：`{ts}` `{ts_sec}` `{date}` `{random}`，同一页面访问内固定，不会反复跳转
@@ -28,12 +29,18 @@ Tampermonkey / Violentmonkey 脚本：给指定域名自动追加、覆盖或删
 
 ## 快速上手：让 Steam 显示简体中文
 
-1. 打开任意 Steam 商店页，点油猴图标 → **⚙️ 配置 URL 参数规则**
-2. 预设区第一个下拉选「Steam · 界面语言」，第二个选「Steam 商店 + 社区 · 简体中文」
-3. 点「按当前站点套用」→ **保存并立即应用**
-4. 之后访问 Steam 都会自动变成 `https://store.steampowered.com/.../?l=schinese`
+1. 打开任意 Steam 页面，点油猴图标 → **⚙️ 配置 URL 参数规则**
+2. 预设区第一个下拉选「Steam 全站 · 界面语言（商店 + 社区）」，第二个选「Steam 全站 · 简体中文」
+3. 点「添加该预设」→ **保存并立即应用**
+4. 之后商店和社区都会自动带上 `?l=schinese`
 
 想看美区价格就选「Steam · 美区 USD」预设（注意 `cc` 需未登录）。
+
+> **Steam 有两组独立域名**，别搞混：
+> - `*.steampowered.com` — 商店、客服、结算（store. / help. / checkout. 等子域）
+> - `steamcommunity.com` — 社区、市场、创意工坊、讨论区、个人主页
+>
+> `*.steampowered.com` 这个通配**匹配不到** steamcommunity.com。想要两边都生效，用「Steam 全站」分组，或手动填 `*.steampowered.com, steamcommunity.com`。
 
 ## 使用
 
@@ -55,7 +62,7 @@ Tampermonkey / Violentmonkey 脚本：给指定域名自动追加、覆盖或删
 
 | 字段 | 说明 |
 | --- | --- |
-| 域名 | `example.com` 精确匹配；`*.example.com` 匹配自身及所有子域；`*` 匹配全部 |
+| 域名 | `example.com` 精确匹配；`*.example.com` 匹配自身及所有子域；`*` 匹配全部；多个域名用逗号分隔 |
 | 路径 | 留空匹配全部路径；填 `/app/` 则只对该前缀生效；支持 `*` 模糊匹配 |
 | 启用 | 关闭后该规则不生效 |
 | 模式 | 见上表三种注入模式 |
@@ -65,12 +72,14 @@ Tampermonkey / Violentmonkey 脚本：给指定域名自动追加、覆盖或删
 
 ### 内置预设一览
 
-| 分组 | 预设 |
-| --- | --- |
-| Steam 界面语言 | 简体中文 `schinese`、繁体中文 `tchinese`、英文 `english`、日文 `japanese`、韩文 `koreana`、俄文 `russian` |
-| Steam 商店区域 | 国区 `cn`、美区 `us`、港区 `hk`、日区 `jp`、俄区 `ru`、英区 `uk`、土区 `tr`、阿区 `ar` |
-| 组合 | 简中+国区、简中+美区、简中+港区 |
-| 其他 | SteamDB 显示所有价格、去 utm 追踪、去 Steam `snr` 追踪 |
+| 分组 | 域名范围 | 预设 |
+| --- | --- | --- |
+| Steam 全站 · 界面语言 | `*.steampowered.com` + `steamcommunity.com` | 简中 `schinese`、繁中 `tchinese`、英文 `english`、日文 `japanese`、韩文 `koreana`、俄文 `russian`、德文、法文 |
+| Steam 商店 · 界面语言 | 仅 `*.steampowered.com` | 同上 6 种语言 |
+| Steam 社区 · 界面语言 | 仅 `steamcommunity.com` | 同上 6 种语言 |
+| Steam · 商店区域 | `*.steampowered.com` + `steamcommunity.com` | 国区 `cn`、美区 `us`、港区 `hk`、日区 `jp`、俄区 `ru`、英区 `uk`、土区 `tr`、阿区 `ar` |
+| Steam · 语言+区域组合 | 全站 | 简中+国区、简中+美区、简中+港区 |
+| 其他常用 | — | SteamDB 显示所有价格、去 utm 追踪、去 Steam `snr` 追踪 |
 
 ### 动态变量
 
@@ -83,12 +92,31 @@ Tampermonkey / Violentmonkey 脚本：给指定域名自动追加、覆盖或删
 
 ### 示例配置
 
-### Steam 强制简体中文
+### Steam 商店 + 社区强制简体中文（推荐）
 
 ```json
 [
   {
     "id": "steam-zh",
+    "host": "*.steampowered.com, steamcommunity.com",
+    "path": "",
+    "enabled": true,
+    "overwrite": true,
+    "mode": "early",
+    "remove": [],
+    "params": [
+      { "key": "l", "value": "schinese" }
+    ]
+  }
+]
+```
+
+### 只改商店（不碰社区）
+
+```json
+[
+  {
+    "id": "steam-store-zh",
     "host": "*.steampowered.com",
     "path": "",
     "enabled": true,
@@ -154,6 +182,8 @@ git push -u origin main
 - 脚本 `@match *://*/*`，在所有站点运行；只有命中规则的域名才会改 URL
 - **Steam 的 `cc=` 区域参数仅在未登录状态下生效**，登录后商店会按账户所在国家/地区显示价格，这是 Steam 官方规则，脚本无法绕过
 - Steam 的 `l=` 语言参数会同时写入 cookie，通常在访问一次后即生效
+- 社区市场的价格同样受账户钱包币种约束，`cc=` 只在登出时有效
+- `steamcommunity.com` 是独立域名，不在 `*.steampowered.com` 通配范围内，需要显式写出来
 - `reload` / `early` 模式在某些站点（如银行、OA）可能触发风控或造成重复请求，按需开启
 - 配置存放在油猴的 `GM_setValue` 存储里，不同浏览器不互通，可用导出 JSON 迁移
 
