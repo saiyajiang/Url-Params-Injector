@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.0 - 2026-10-19
+
+- 新增「语言偏好防护」：拦截 Steam 自发保存语言的请求，做到只改本次显示、不改账户设置
+- 内置 Steam 三个端点：/account/setlanguage、/account/savelanguagepreferences、/actions/SetLanguage
+- 防护层级覆盖 XHR（原型级）、fetch、sendBeacon、document.cookie（steam_language）
+- 两种拦截方式：吞掉请求（默认，不触发回调）/ 伪造成功响应
+- 只拦 POST/PUT/PATCH/DELETE，GET 放行；拦截名单可在面板自定义
+- 油猴菜单新增 🛡️ 开启 / 关闭语言偏好防护，设置即时保存
+- 新增防死循环保险：10 秒内重定向超过 6 次自动暂停注入
+- toast 增加容错，页面环境异常时静默降级
+- 补充 12 组防护测试 + 防死循环测试，覆盖拦截/放行/模式差异/cookie/beacon/自定义名单
+
 ## 1.3.0 - 2026-10-19
 
 - 修复：预设误标为「Steam 商店 + 社区」，实际 `*.steampowered.com` 匹配不到 `steamcommunity.com`
