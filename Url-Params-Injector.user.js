@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         URL 参数注入器（可视化配置版）
 // @namespace    https://github.com/saiyajiang/Url-Params-Injector
-// @version      1.4.0
-// @description  本脚本由 AI 辅助编写。为指定域名自动追加 / 覆盖 / 删除 URL 查询参数，自带可视化配置面板、常用站点预设（Steam 商店/社区中文、换区等），并可拦截站点保存语言偏好的请求
+// @version      1.5.0
+// @description  本脚本由 AI 辅助编写。为指定域名自动追加 / 覆盖 / 删除 URL 查询参数，内置 Steam 专属板块（界面语言、商店区域、语言防护一键配置）与通用规则面板
 // @author       悲歌
 // @match        *://*/*
 // @grant        GM_registerMenuCommand
@@ -127,6 +127,51 @@
   };
 
   /* ============================================================
+   * 0.2 Steam 专区：独立的语言 / 区域 / 防护配置
+   *     规则用固定 id 存储，便于专区直接读写与覆盖
+   * ========================================================== */
+  const STEAM_SCOPE = {
+    all:      { id: 'all',      host: STEAM_ALL,       label: '全站（商店 + 社区）' },
+    store:    { id: 'store',    host: STEAM_STORE,     label: '仅商店 steampowered.com' },
+    community:{ id: 'community',host: STEAM_COMMUNITY, label: '仅社区 steamcommunity.com' }
+  };
+
+  const STEAM_LANGS = [
+    { v: 'schinese',  zh: '简体中文',  native: '简体中文 (Simplified Chinese)' },
+    { v: 'tchinese',  zh: '繁体中文',  native: '繁體中文 (Traditional Chinese)' },
+    { v: 'english',   zh: '英语',      native: 'English' },
+    { v: 'japanese',  zh: '日语',      native: '日本語' },
+    { v: 'koreana',   zh: '韩语',      native: '한국어' },
+    { v: 'russian',   zh: '俄语',      native: 'Русский' },
+    { v: 'german',    zh: '德语',      native: 'Deutsch' },
+    { v: 'french',    zh: '法语',      native: 'Français' },
+    { v: 'spanish',   zh: '西班牙语',  native: 'Español' },
+    { v: 'thai',      zh: '泰语',      native: 'ไทย' },
+    { v: 'vietnamese',zh: '越南语',    native: 'Tiếng Việt' },
+    { v: 'ukrainian', zh: '乌克兰语',  native: 'Українська' }
+  ];
+
+  const STEAM_REGIONS = [
+    { v: 'us', zh: '美区', cur: 'USD $' },
+    { v: 'cn', zh: '国区', cur: 'CNY ¥' },
+    { v: 'hk', zh: '港区', cur: 'HKD HK$' },
+    { v: 'jp', zh: '日区', cur: 'JPY ¥' },
+    { v: 'ru', zh: '俄区', cur: 'RUB ₽' },
+    { v: 'uk', zh: '英区', cur: 'GBP £' },
+    { v: 'tr', zh: '土区', cur: 'TRY ₺' },
+    { v: 'ar', zh: '阿区', cur: 'ARS $' },
+    { v: 'de', zh: '德区', cur: 'EUR €' },
+    { v: 'fr', zh: '法区', cur: 'EUR €' },
+    { v: 'kr', zh: '韩区', cur: 'KRW ₩' },
+    { v: 'tw', zh: '台区', cur: 'TWD NT$' }
+  ];
+
+  // 专区管理的三条固定规则 id
+  const STEAM_RULE_LANG  = 'steam-lang';
+  const STEAM_RULE_CC    = 'steam-cc';
+  const STEAM_RULE_CLEAN = 'steam-clean';
+
+  /* ============================================================
    * 1. 配置读写
    * ========================================================== */
   let rules = loadRules();
@@ -216,6 +261,107 @@
       return re.test(h);
     }
     return h === p || h.indexOf(p) === 0;
+  }
+
+  /* ============================================================
+   * 2.5 Steam 专区：规则读写
+   * ========================================================== */
+  function findSteamRule(list, id) {
+    return (list || []).find(r => r && r.id === id) || null;
+  }
+
+  /** 从语言规则里反查当前生效的语言值与覆盖范围 */
+  function readSteamLang(list) {
+    const r = findSteamRule(list, STEAM_RULE_LANG);
+    if (!r || r.enabled === false) return { value: '', scope: 'all', enabled: false };
+    const p = (r.params || []).find(x => x && x.key === 'l');
+    const hosts = String(r.host || '');
+    let scope = 'all';
+    if (hosts.indexOf('steamcommunity.com') === -1) scope = 'store';
+    else if (hosts.indexOf('steampowered.com') === -1) scope = 'community';
+    return { value: p ? p.value : '', scope: scope, enabled: true };
+  }
+
+  /** 从区域规则里反查当前生效的区域值 */
+  function readSteamCc(list) {
+    const r = findSteamRule(list, STEAM_RULE_CC);
+    if (!r || r.enabled === false) return { value: '', enabled: false };
+    const p = (r.params || []).find(x => x && x.key === 'cc');
+    return { value: p ? p.value : '', enabled: true };
+  }
+
+  function readSteamClean(list) {
+    const r = findSteamRule(list, STEAM_RULE_CLEAN);
+    return { enabled: !!(r && r.enabled !== false) };
+  }
+
+  /* 专区里的待应用选择：点 chip 只更新这里，点「应用」才落盘 */
+  let steamPendingLang = '';
+  let steamPendingCc = '';
+  let steamPendingScope = 'all';
+
+  function syncSteamPending() {
+    const l = readSteamLang(draft);
+    steamPendingLang = l.enabled ? l.value : '';
+    steamPendingScope = l.scope || 'all';
+    const c = readSteamCc(draft);
+    steamPendingCc = c.enabled ? c.value : '';
+  }
+
+  /** 新标签页打开（比 window.open 在油猴沙盒里更可靠） */
+  function openUrl(url) {
+    try {
+      const a = doc.createElement('a');
+      a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      doc.body.appendChild(a);
+      a.click();
+      setTimeout(() => { try { a.remove(); } catch (e) {} }, 0);
+    } catch (e) {
+      try { win.open(url, '_blank'); } catch (e2) { console.warn('[UPI] 打开链接失败', e2); }
+    }
+  }
+
+  /** 专区改动落盘：保存 → 应用 → 重绘 */
+  function commitSteam(msg) {
+    draft = draft.filter(r => String(r.host || '').trim())
+      .map(normalizeRule)
+      .filter(Boolean);
+    rules = clone(draft);
+    saveRules(rules);
+    dynCache.clear();
+    syncSteamPending();
+    applyRules();
+    renderPanel();
+    toast(msg);
+  }
+
+  /** 写入（或删除）一条专区规则；value 为空表示移除该规则 */
+  function writeSteamRule(list, id, host, params, remove) {
+    let next = (list || []).slice();
+    const idx = next.findIndex(r => r && r.id === id);
+    const keep = (params && params.length) || (remove && remove.length);
+
+    if (!keep) {
+      if (idx !== -1) next.splice(idx, 1);
+      return next;
+    }
+
+    const rule = {
+      id: id,
+      host: host,
+      path: '',
+      enabled: true,
+      overwrite: true,
+      mode: 'early',
+      reload: true,
+      remove: remove || [],
+      params: params || []
+    };
+    if (idx === -1) next.push(rule);
+    else next[idx] = rule;
+    return next;
   }
 
   /* ============================================================
@@ -647,13 +793,82 @@
 #${PANEL_ID} .upi-tip { color: #6a737d; margin-top: 8px; white-space: pre-line; }
 #${PANEL_ID} .upi-close { float: right; cursor: pointer; font-size: 20px; line-height: 1; color: #6a737d; }
 #${PANEL_ID} code { background: #eff1f3; padding: 1px 5px; border-radius: 4px; }
+
+#${PANEL_ID} .upi-tabs { display: flex; gap: 6px; border-bottom: 1px solid #d0d7de; margin-bottom: 14px; }
+#${PANEL_ID} .upi-tab {
+  border: 1px solid transparent; border-bottom: none; background: transparent;
+  border-radius: 8px 8px 0 0; padding: 7px 14px; cursor: pointer;
+  color: #6a737d; position: relative; top: 1px; font-size: 13px;
+}
+#${PANEL_ID} .upi-tab.on {
+  background: #fff; border-color: #d0d7de; color: #0969da; font-weight: 600;
+}
+#${PANEL_ID} .upi-tab:hover { color: #0969da; }
+
+#${PANEL_ID} .upi-block { margin-bottom: 16px; }
+#${PANEL_ID} .upi-tip2 { color: #6a737d; font-size: 12px; margin: 4px 0 8px; }
+#${PANEL_ID} .upi-alert {
+  background: #fff8c5; border: 1px solid #d4a72c66; border-radius: 8px;
+  padding: 8px 10px; margin-top: 10px; font-size: 12px; line-height: 1.6;
+}
+#${PANEL_ID} .upi-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+#${PANEL_ID} .upi-chip {
+  border: 1px solid #d0d7de; background: #f6f8fa; border-radius: 999px;
+  padding: 5px 12px; cursor: pointer; font-size: 12px; color: #1f2328;
+}
+#${PANEL_ID} .upi-chip:hover { border-color: #0969da; color: #0969da; }
+#${PANEL_ID} .upi-chip.on {
+  background: #0969da; border-color: #0969da; color: #fff; font-weight: 600;
+}
+#${PANEL_ID} .upi-radios { display: flex; flex-wrap: wrap; gap: 10px; margin: 6px 0 8px; }
+#${PANEL_ID} .upi-radio { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; font-size: 12px; user-select: none; }
+#${PANEL_ID} .upi-radio.on { color: #0969da; font-weight: 600; }
+
+#${PANEL_ID} .upi-steam-status {
+  background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 10px;
+  padding: 10px 12px; margin-bottom: 14px;
+}
+#${PANEL_ID} .upi-steam-status.active { background: #ddf4e4; border-color: #1f883d55; }
+#${PANEL_ID} .upi-steam-badge { font-weight: 600; font-size: 13px; margin-bottom: 8px; }
+#${PANEL_ID} .upi-steam-status.active .upi-steam-badge { color: #1a7f37; }
+#${PANEL_ID} .upi-kv { display: flex; gap: 10px; font-size: 12px; padding: 2px 0; }
+#${PANEL_ID} .upi-kv-k { min-width: 68px; color: #6a737d; }
+#${PANEL_ID} .upi-kv-v.ok { color: #1a7f37; font-weight: 600; }
+#${PANEL_ID} .upi-kv-v.off { color: #8c959f; }
+
+#${PANEL_ID} .upi-switches { display: flex; flex-direction: column; gap: 8px; }
+#${PANEL_ID} .upi-switch {
+  display: grid; grid-template-columns: auto 1fr; gap: 2px 8px;
+  border: 1px solid #d0d7de; border-radius: 8px; padding: 8px 10px; cursor: pointer;
+}
+#${PANEL_ID} .upi-switch:hover { border-color: #0969da; }
+#${PANEL_ID} .upi-switch input { grid-row: span 2; align-self: start; margin-top: 2px; }
+#${PANEL_ID} .upi-switch-t { font-size: 13px; font-weight: 600; }
+#${PANEL_ID} .upi-switch-d { font-size: 12px; color: #6a737d; }
 @media (prefers-color-scheme: dark) {
   #${PANEL_ID} .upi-box { background: #22272e; color: #e6edf3; }
   #${PANEL_ID} .upi-rule { background: #2a3038; border-color: #444c56; }
   #${PANEL_ID} input[type=text], #${PANEL_ID} textarea { background: #22272e; color: #e6edf3; border-color: #444c56; }
+  #${PANEL_ID} select { background: #22272e !important; color: #e6edf3 !important; border-color: #444c56 !important; }
   #${PANEL_ID} button { background: #2f353d; color: #e6edf3; border-color: #444c56; }
   #${PANEL_ID} button:hover { background: #3a4149; }
   #${PANEL_ID} code { background: #2f353d; }
+  #${PANEL_ID} .upi-tabs { border-color: #444c56; }
+  #${PANEL_ID} .upi-tab.on { background: #22272e; border-color: #444c56; color: #58a6ff; }
+  #${PANEL_ID} .upi-tab:hover { color: #58a6ff; }
+  #${PANEL_ID} .upi-chip { background: #2f353d; border-color: #444c56; color: #e6edf3; }
+  #${PANEL_ID} .upi-chip:hover { border-color: #58a6ff; color: #58a6ff; }
+  #${PANEL_ID} .upi-chip.on { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  #${PANEL_ID} .upi-radio.on { color: #58a6ff; }
+  #${PANEL_ID} .upi-steam-status { background: #2a3038; border-color: #444c56; }
+  #${PANEL_ID} .upi-steam-status.active { background: #1a3326; border-color: #2ea04355; }
+  #${PANEL_ID} .upi-steam-status.active .upi-steam-badge { color: #3fb950; }
+  #${PANEL_ID} .upi-kv-v.ok { color: #3fb950; }
+  #${PANEL_ID} .upi-kv-v.off { color: #8b949e; }
+  #${PANEL_ID} .upi-switch { border-color: #444c56; }
+  #${PANEL_ID} .upi-switch:hover { border-color: #58a6ff; }
+  #${PANEL_ID} .upi-alert { background: #3b2f0a; border-color: #9e6a03; color: #e6edf3; }
+  #${PANEL_ID} .upi-toast { background: rgba(0,0,0,.9) !important; }
 }
 `;
     (doc.head || doc.documentElement).appendChild(s);
@@ -722,6 +937,136 @@
 </div>`;
   }
 
+  /** Steam 专区：当前状态卡片（展示待应用选择，并提示是否尚未落盘） */
+  function steamStatusHtml() {
+    const savedLang = readSteamLang(draft);
+    const savedCc = readSteamCc(draft);
+    const clean = readSteamClean(draft);
+
+    const dirty = (steamPendingLang !== (savedLang.enabled ? savedLang.value : ''))
+      || (steamPendingCc !== (savedCc.enabled ? savedCc.value : ''))
+      || (steamPendingLang && steamPendingScope !== savedLang.scope && savedLang.enabled);
+
+    const langHit = STEAM_LANGS.find(x => x.v === steamPendingLang);
+    const ccHit = STEAM_REGIONS.find(x => x.v === steamPendingCc);
+    const on = !!steamPendingLang;
+
+    const row = (k, v, ok) => `
+      <div class="upi-kv">
+        <span class="upi-kv-k">${k}</span>
+        <span class="upi-kv-v ${ok ? 'ok' : 'off'}">${v}</span>
+      </div>`;
+
+    const badge = dirty ? '● 有改动待应用'
+      : (on ? '● Steam 规则已生效' : '○ 尚未设置 Steam 语言');
+
+    return `
+      <div class="upi-steam-status ${on && !dirty ? 'active' : ''}">
+        <div class="upi-steam-badge">${badge}</div>
+        ${row('界面语言', steamPendingLang ? (esc(langHit ? langHit.zh : steamPendingLang) + ' <code>?l=' + esc(steamPendingLang) + '</code>') : '未设置', !!steamPendingLang)}
+        ${row('生效范围', steamPendingLang ? esc(STEAM_SCOPE[steamPendingScope].label) : '—', !!steamPendingLang)}
+        ${row('商店区域', steamPendingCc ? (esc(ccHit ? ccHit.zh : steamPendingCc) + ' <code>?cc=' + esc(steamPendingCc) + '</code>') : '未设置', !!steamPendingCc)}
+        ${row('语言防护', guard.enabled ? '已开启（拦截 ' + blockedCount + ' 次）' : '未开启', guard.enabled)}
+        ${row('去 snr 追踪', clean.enabled ? '已开启' : '未开启', clean.enabled)}
+      </div>`;
+  }
+
+  /** Steam 专区：语言按钮组 */
+  function steamLangHtml() {
+    const scopeBtns = Object.keys(STEAM_SCOPE).map(k =>
+      `<label class="upi-radio ${steamPendingScope === k ? 'on' : ''}">
+         <input type="radio" name="upi-steam-scope" value="${k}" ${steamPendingScope === k ? 'checked' : ''}>
+         ${esc(STEAM_SCOPE[k].label)}
+       </label>`).join('');
+
+    const langBtns = STEAM_LANGS.map(l =>
+      `<button class="upi-chip ${steamPendingLang === l.v ? 'on' : ''}" data-act="steam-set-lang" data-v="${esc(l.v)}" title="${esc(l.native)}">${esc(l.zh)}</button>`
+    ).join('');
+
+    return `
+      <div class="upi-block">
+        <div class="upi-head4">① 界面语言 <code>?l=</code></div>
+        <div class="upi-tip2">点选语言 → 选范围 → 点「应用语言设置」。再次点击同一语言可取消选择。</div>
+        <div class="upi-chips">${langBtns}</div>
+        <div class="upi-head4">生效范围</div>
+        <div class="upi-radios">${scopeBtns}</div>
+        <div class="upi-tip2">⚠️ 商店与社区是不同域名：<code>*.steampowered.com</code> ≠ <code>steamcommunity.com</code>。选「全站」才能两边都生效。</div>
+        <div class="upi-row" style="margin-top:8px">
+          <button class="primary" data-act="steam-apply-lang">应用语言设置</button>
+          <button data-act="steam-clear-lang">清除语言规则</button>
+        </div>
+      </div>`;
+  }
+
+  /** Steam 专区：区域按钮组 */
+  function steamRegionHtml() {
+    const btns = STEAM_REGIONS.map(r =>
+      `<button class="upi-chip ${steamPendingCc === r.v ? 'on' : ''}" data-act="steam-set-cc" data-v="${esc(r.v)}" title="${esc(r.cur)}">${esc(r.zh)}</button>`
+    ).join('');
+
+    return `
+      <div class="upi-block">
+        <div class="upi-head4">② 商店区域 / 货币 <code>?cc=</code></div>
+        <div class="upi-chips">${btns}</div>
+        <div class="upi-row" style="margin-top:8px">
+          <button class="primary" data-act="steam-apply-cc">应用区域设置</button>
+          <button data-act="steam-clear-cc">清除区域规则</button>
+        </div>
+        <div class="upi-alert">⚠️ <b>cc 参数仅在未登录状态下生效。</b>登录后 Steam 一律按账户所在国家/地区显示价格，这是官方规则，脚本无法绕过。想看外币价请用无痕窗口或先退出登录。</div>
+      </div>`;
+  }
+
+  /** Steam 专区：配套开关 */
+  function steamToolsHtml() {
+    const clean = readSteamClean(draft);
+    return `
+      <div class="upi-block">
+        <div class="upi-head4">③ 配套设置</div>
+        <div class="upi-switches">
+          <label class="upi-switch">
+            <input type="checkbox" id="upi-steam-guard" ${guard.enabled ? 'checked' : ''}>
+            <span class="upi-switch-t">🛡️ 语言偏好防护</span>
+            <span class="upi-switch-d">拦截 Steam 保存语言的请求，只改本次显示、不改账户设置</span>
+          </label>
+          <label class="upi-switch">
+            <input type="checkbox" data-act="steam-toggle-clean" ${clean.enabled ? 'checked' : ''}>
+            <span class="upi-switch-t">🧹 去掉 snr 追踪参数</span>
+            <span class="upi-switch-d">Steam 站内链接自带的 <code>?snr=1_5_9__429</code>，分享链接时更干净</span>
+          </label>
+          <label class="upi-switch">
+            <input type="checkbox" id="upi-steam-guard-cookie" ${guard.blockCookie ? 'checked' : ''}>
+            <span class="upi-switch-t">🍪 阻止写 steam_language cookie</span>
+            <span class="upi-switch-d">防止语言被持久化到本地，关闭浏览器后仍回到原语言</span>
+          </label>
+        </div>
+        <div class="upi-tip2">防护改动即时保存，<b>下次进入 Steam 生效</b>（必须在页面脚本运行前装好拦截器）。</div>
+        <div class="upi-row" style="margin-top:10px">
+          <button data-act="steam-open-site">打开 Steam 商店验证</button>
+          <button data-act="steam-open-community">打开 Steam 社区验证</button>
+          <button class="danger" data-act="steam-clear-all">清除全部 Steam 规则</button>
+        </div>
+      </div>`;
+  }
+
+  function steamSectionHtml() {
+    return `
+      <div class="upi-steam">
+        ${steamStatusHtml()}
+        ${steamLangHtml()}
+        ${steamRegionHtml()}
+        ${steamToolsHtml()}
+        <div class="upi-block">
+          <div class="upi-head4">说明</div>
+          <div class="upi-tip">
+· 语言参数 <code>l=</code> 由服务端渲染，必须用 <b>early</b>（抢在渲染前跳转）或 <b>reload</b> 模式，专区已自动设为 early
+· 语言规则会同时写入 <code>steam_language</code> cookie，通常访问一次即生效
+· 首次开启语言后建议顺手打开「语言偏好防护」，避免账户语言被一并改掉
+· 本专区的所有设置最终都会落到通用规则里，可在「通用规则」页签查看与微调
+</div>
+        </div>
+      </div>`;
+  }
+
   function presetItemsHtml(gi) {
     const g = PRESETS[gi];
     if (!g) return '';
@@ -731,11 +1076,26 @@
   }
 
   function panelHtml(draft) {
+    const tab = currentTab;
     return `
       <div class="upi-box">
         <span class="upi-close" data-act="close">×</span>
         <h3>URL 参数注入器 · 规则配置</h3>
         <div class="upi-sub">当前站点：<code>${esc(win.location.hostname)}${esc(win.location.pathname)}</code></div>
+        <div class="upi-tabs">
+          <button class="upi-tab ${tab === 'steam' ? 'on' : ''}" data-act="tab" data-tab="steam">🎮 Steam 专区</button>
+          <button class="upi-tab ${tab === 'rules' ? 'on' : ''}" data-act="tab" data-tab="rules">📋 通用规则</button>
+          <button class="upi-tab ${tab === 'guard' ? 'on' : ''}" data-act="tab" data-tab="guard">🛡️ 高级防护</button>
+        </div>
+        ${tab === 'steam' ? steamSectionHtml() : ''}
+        ${tab === 'guard' ? guardSectionHtml() : ''}
+        ${tab === 'rules' ? rulesSectionHtml(draft) : ''}
+      </div>`;
+  }
+
+  function rulesSectionHtml(draft) {
+    return `
+      <div>
         <div class="upi-head4">📦 从预设一键添加</div>
         <div class="upi-row">
           <select id="upi-preset-group" style="padding:5px 8px;border-radius:6px;border:1px solid #d0d7de;background:#fff;color:#1f2328">
@@ -782,6 +1142,7 @@
   }
 
   let draft = null;
+  let currentTab = 'steam';
 
   function renderPanel() {
     const root = doc.getElementById(PANEL_ID);
@@ -793,6 +1154,7 @@
     ensureStyle();
     closePanel();
     draft = clone(rules);
+    syncSteamPending();
 
     const root = doc.createElement('div');
     root.id = PANEL_ID;
@@ -830,6 +1192,84 @@
     if (act === 'add-current') {
       draft.push({ id: uid(), host: win.location.hostname, path: '', enabled: true, overwrite: false, mode: 'soft', reload: false, remove: [], params: [{ key: '', value: '' }] });
       return renderPanel();
+    }
+
+    /* ---------- Steam 专区 ---------- */
+    if (act === 'tab') {
+      currentTab = btn.getAttribute('data-tab') || 'steam';
+      return renderPanel();
+    }
+
+    if (act === 'steam-set-lang') {
+      const v = btn.getAttribute('data-v');
+      const cur = readSteamLang(draft);
+      // 再次点击同一语言 = 取消
+      steamPendingLang = (cur.value === v && cur.enabled) ? '' : v;
+      renderPanel();
+      return;
+    }
+
+    if (act === 'steam-set-cc') {
+      const v = btn.getAttribute('data-v');
+      const cur = readSteamCc(draft);
+      steamPendingCc = (cur.value === v && cur.enabled) ? '' : v;
+      renderPanel();
+      return;
+    }
+
+    if (act === 'steam-apply-lang') {
+      const scope = steamPendingScope;
+      const host = STEAM_SCOPE[scope].host;
+      const params = steamPendingLang ? [{ key: 'l', value: steamPendingLang }] : [];
+      draft = writeSteamRule(draft, STEAM_RULE_LANG, host, params, []);
+      commitSteam('界面语言已' + (steamPendingLang ? '设为 ' + steamPendingLang : '清除'));
+      return;
+    }
+
+    if (act === 'steam-apply-cc') {
+      const params = steamPendingCc ? [{ key: 'cc', value: steamPendingCc }] : [];
+      draft = writeSteamRule(draft, STEAM_RULE_CC, STEAM_ALL, params, []);
+      commitSteam('商店区域已' + (steamPendingCc ? '设为 ' + steamPendingCc : '清除'));
+      return;
+    }
+
+    if (act === 'steam-clear-lang') {
+      draft = writeSteamRule(draft, STEAM_RULE_LANG, '', [], []);
+      steamPendingLang = '';
+      commitSteam('已清除语言规则');
+      return;
+    }
+
+    if (act === 'steam-clear-cc') {
+      draft = writeSteamRule(draft, STEAM_RULE_CC, '', [], []);
+      steamPendingCc = '';
+      commitSteam('已清除区域规则');
+      return;
+    }
+
+    if (act === 'steam-clear-all') {
+      draft = draft.filter(r => !r || String(r.id || '').indexOf('steam-') !== 0);
+      steamPendingLang = '';
+      steamPendingCc = '';
+      commitSteam('已清除全部 Steam 规则');
+      return;
+    }
+
+    if (act === 'steam-toggle-clean') {
+      const on = btn.checked;
+      draft = writeSteamRule(draft, STEAM_RULE_CLEAN, STEAM_ALL, [], on ? ['snr'] : []);
+      commitSteam(on ? '已开启去 snr 追踪' : '已关闭去 snr 追踪');
+      return;
+    }
+
+    if (act === 'steam-open-site') {
+      openUrl('https://store.steampowered.com/');
+      return;
+    }
+
+    if (act === 'steam-open-community') {
+      openUrl('https://steamcommunity.com/');
+      return;
     }
 
     if (act === 'add-preset' || act === 'add-preset-current') {
@@ -884,6 +1324,7 @@
       rules = clone(draft);
       saveRules(rules);
       dynCache.clear();
+      syncSteamPending();
       applyRules();
       closePanel();
       toast('已保存并应用');
@@ -975,11 +1416,12 @@
     }
 
     // 防护设置：即时保存，不受「保存」按钮影响
-    if (el.id === 'upi-guard-enabled') {
+    if (el.id === 'upi-guard-enabled' || el.id === 'upi-steam-guard') {
       guard.enabled = el.checked;
       saveGuard(guard);
       if (guard.enabled) installGuards();
-      toast('语言偏好防护：' + (guard.enabled ? '已开启' : '已关闭'));
+      toast('语言偏好防护：' + (guard.enabled ? '已开启' : '已关闭') + '（下次进入站点生效）');
+      if (el.id === 'upi-steam-guard') renderPanel();
       return;
     }
     if (el.id === 'upi-guard-mode') {
@@ -987,9 +1429,18 @@
       saveGuard(guard);
       return;
     }
-    if (el.id === 'upi-guard-cookie') {
+    if (el.id === 'upi-guard-cookie' || el.id === 'upi-steam-guard-cookie') {
       guard.blockCookie = el.checked;
       saveGuard(guard);
+      toast('steam_language cookie 防护：' + (guard.blockCookie ? '已开启' : '已关闭'));
+      if (el.id === 'upi-steam-guard-cookie') renderPanel();
+      return;
+    }
+
+    // Steam 范围单选：只更新待应用值，不落盘
+    if (el.name === 'upi-steam-scope') {
+      steamPendingScope = el.value || 'all';
+      renderPanel();
       return;
     }
     if (el.id === 'upi-guard-log') {
